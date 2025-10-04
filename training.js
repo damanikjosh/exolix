@@ -51,6 +51,15 @@ async function loadTrainingData() {
     
     // Extract features based on mapping
     extractedFeatures = extractFeatures(concatenatedData, featureMapping, sortedTables);
+    window.extractedFeatures = extractedFeatures; // make it globally readable (optional but handy)
+    document.dispatchEvent(
+      new CustomEvent('exolix:preprocessed-ready', {
+        detail: {
+          sampleCount: extractedFeatures.sampleCount,
+          featureCount: extractedFeatures.inputDimension
+        }
+      })
+    );
     console.log('Extracted features:', extractedFeatures);
     
     trainingData = extractedFeatures;
@@ -67,6 +76,26 @@ async function loadTrainingData() {
     return { success: false, error: error.message };
   }
 }
+
+
+
+// ---------- Expose preprocessed data to other modules (Prompt Builder)
+window.getMappedFeatureMatrix = function () {
+  try {
+    return (extractedFeatures && Array.isArray(extractedFeatures.inputs)) ? extractedFeatures.inputs : [];
+  } catch { return []; }
+};
+
+window.getFeatureIndexCount = function () {
+  try {
+    return (extractedFeatures && extractedFeatures.inputDimension) ? extractedFeatures.inputDimension : 0;
+  } catch { return 0; }
+};
+
+
+
+
+
 
 // Concatenate data from all tables (each table contributes its own rows)
 function concatenateTableData(tableDataArrays) {

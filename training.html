@@ -45,6 +45,60 @@
         </div>
       </div>
     </div>
+    <!-- Prompt Builder (KOI / TESS) -->
+    <div class="card rounded-xl p-6 mb-6" id="promptBuilderCard">
+      <h2 class="text-xl font-semibold mb-4 text-white">Prompt Builder (KOI / TESS)</h2>
+
+      <!-- Dataset & Template -->
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-2">Dataset</label>
+          <select id="pbDataset" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white">
+            <option value="KOI">Kepler Object of Interest (KOI)</option>
+            <option value="TESS">TESS Objects</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-2">Prompt Template</label>
+          <textarea id="pbTemplate" rows="3"
+            class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white"
+            placeholder="Use {{placeholders}} that match feature keys below"></textarea>
+          <p class="text-xs text-gray-400 mt-1">
+            Tip: Use <code>{{index}}</code> placeholders, e.g. <code>{{0}}</code>, <code>{{1}}</code>. Indices map to columns of the data matrix.          </p>
+        </div>
+      </div>
+
+      <!-- Dynamic feature fields -->
+      <div class="mt-6">
+        <h3 class="text-lg font-semibold text-white mb-2">Features</h3>
+        <div id="pbFields" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      </div>
+
+      <!-- Actions + Progress -->
+      <div class="mt-6 flex items-center gap-4">
+        <button id="pbSendBtn"
+          class="btn-primary px-6 py-3 rounded-lg font-semibold disabled:bg-gray-700 disabled:cursor-not-allowed transition">
+          Send to LLM
+        </button>
+
+        <div id="pbProgressWrap" class="flex-1 hidden">
+          <div class="flex justify-between text-xs text-gray-400 mb-1">
+            <span id="pbProgLabel">Preparing…</span>
+            <span id="pbProgTime">--s</span>
+          </div>
+          <div class="w-full h-2 bg-gray-800 rounded">
+            <div id="pbProgFill" class="h-2 bg-blue-500 rounded" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live prompt preview -->
+      <div class="mt-6">
+        <h3 class="text-lg font-semibold text-white mb-2">Preview</h3>
+        <pre id="pbPreview"
+          class="whitespace-pre-wrap text-gray-200 bg-gray-900 border border-gray-800 rounded p-3 text-sm"></pre>
+      </div>
+    </div>
 
     <!-- Actions -->
     <div class="flex flex-wrap gap-4">
@@ -73,5 +127,6 @@
     initStarfield();
   </script>
   <script type="module" src="training.js"></script>
+  <script type="module" src="promptflow.js"></script>
 </body>
 </html>
