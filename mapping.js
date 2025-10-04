@@ -182,6 +182,63 @@ function addInputFeature() {
   updateProceedButton();
 }
 
+// Bulk add all columns that appear in EVERY table as separate input features
+function addAllColumnsAsFeatures() {
+  if (!state.tables.length) return;
+  const totalTables = state.tables.length;
+  // Build sets of columns per table
+  const tableColumnSets = state.tables.map(t => new Set(t.columns));
+  // Intersect to get columns present in every table
+  const commonColumns = state.tables[0].columns.filter(col => tableColumnSets.every(set => set.has(col)));
+  if (!commonColumns.length) {
+    alert('No common columns across all tables to add.');
+    return;
+  }
+  // Filter out columns already assigned anywhere
+  const alreadyAssigned = new Set();
+  state.inputFeatures.forEach(f => f.mappedColumns.forEach(c => alreadyAssigned.add(c.columnName)));
+  const toAdd = commonColumns.filter(c => !alreadyAssigned.has(c));
+  if (!toAdd.length) {
+    alert('All common columns are already assigned to features.');
+    return;
+  }
+  let addedCount = 0;
+  toAdd.forEach(columnName => {
+    // Create a new feature
+    state.featureCounter++;
+    const featureId = `input_${state.featureCounter}`;
+    const mappedColumns = state.tables.map((table, tableIndex) => ({
+      tableIndex,
+      columnName,
+      tableName: table.tabName
+    }));
+    state.inputFeatures.push({ id: featureId, mappedColumns });
+    // Render UI element
+    const container = document.getElementById('inputFeatures');
+    const featureBox = document.createElement('div');
+    featureBox.className = 'drop-zone border-dashed-gray bg-semi-dark bg-blur-sm p-4 rounded filled';
+    featureBox.dataset.featureType = 'input';
+    featureBox.dataset.featureId = featureId;
+    featureBox.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-medium text-gray-300">Input Feature ${state.featureCounter}</div>
+        <button class="remove-feature label-remove-btn" data-feature-id="${featureId}">×</button>
+      </div>
+      <div class="drop-zone-content text-gray-400 text-sm"></div>
+    `;
+    featureBox.querySelector('.remove-feature').addEventListener('click', () => removeInputFeature(featureId));
+    container.appendChild(featureBox);
+    renderFeatureContent(featureId);
+    addedCount++;
+  });
+  populateAvailableColumns();
+  updateMappingSummary();
+  updateProceedButton();
+  autoSaveFeatureMapping();
+  console.log(`✅ Added ${addedCount} features from ${toAdd.length} common column(s).`);
+  alert(`Added ${addedCount} input feature(s) from common columns.`);
+}
+
 // Remove input feature
 function removeInputFeature(featureId) {
   const index = state.inputFeatures.findIndex(f => f.id === featureId);
@@ -707,15 +764,14 @@ async function proceedToTraining() {
       (sum, label) => sum + label.mappedValues.length, 0
     );
     const unmappedCount = state.labelMapping.uniqueValues.length - mappedCount;
-    
-    if (unmappedCount > 0) {
-      alert(`Please map all ${unmappedCount} unmapped value(s) to target labels before proceeding.`);
-      return;
-    }
-    
+    // Allow unmapped labels: we'll skip those rows during training.
     if (state.labelMapping.targetLabels.length === 0) {
       alert('Please create at least one target label.');
       return;
+    }
+    if (unmappedCount > 0) {
+      const proceed = confirm(`There are ${unmappedCount} unmapped value(s).\n\nUnmapped labels will be excluded from training (their rows dropped).\n\nContinue?`);
+      if (!proceed) return;
     }
   }
   
@@ -1055,6 +1111,10 @@ function removeTargetLabel(labelId) {
 
 // Event listeners
 document.getElementById('addFeatureBtn').addEventListener('click', addInputFeature);
+const addAllBtn = document.getElementById('addAllFeaturesBtn');
+if (addAllBtn) {
+  addAllBtn.addEventListener('click', addAllColumnsAsFeatures);
+}
 document.getElementById('resetMapping').addEventListener('click', resetMapping);
 document.getElementById('proceedToTraining').addEventListener('click', proceedToTraining);
 

@@ -42,11 +42,11 @@
         <span id="totalSelectionCount" class="text-sm text-blue-400 font-medium"></span>
       </div>
       <div class="flex items-center space-x-2">
-        <button id="removeTableBtn" class="px-4 py-2 text-red-400 hover:bg-red-900/20 rounded disabled:opacity-50 disabled:cursor-not-allowed transition">
-          Remove Table
-        </button>
         <button id="sendToTraining" class="btn-primary px-4 py-2 rounded disabled:bg-gray-700 disabled:cursor-not-allowed transition">
           Send to Training
+        </button>
+        <button id="predictWithModel" class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white font-medium rounded disabled:opacity-50 disabled:cursor-not-allowed transition" disabled>
+          Predict
         </button>
       </div>
     </div>
@@ -115,21 +115,60 @@
 
   <!-- Add Table Modal -->
   <div id="addTableModal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-    <div class="card rounded-xl p-6 max-w-md w-full mx-4">
-      <h3 class="text-xl font-semibold mb-4 text-white">Add New Table</h3>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">Table Name</label>
-          <input id="tableNameInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="e.g., Kepler Data">
+    <div class="card rounded-xl p-6 max-w-2xl w-full mx-4">
+      <h3 class="text-2xl font-semibold mb-6 text-white text-center">Add New Dataset</h3>
+      
+      <!-- Quick Start Presets -->
+      <div class="mb-8">
+        <h4 class="text-lg font-medium text-gray-300 mb-4 text-center">🚀 Quick Start with NASA Data</h4>
+        <div class="grid grid-cols-2 gap-4">
+          <!-- Kepler Button -->
+          <button id="keplerPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-purple-500/50">
+            <div class="relative z-10">
+              <div class="text-5xl mb-3">🪐</div>
+              <h5 class="text-xl font-bold text-white mb-2">Kepler</h5>
+              <p class="text-sm text-purple-100">Object of Interest 2025</p>
+              <p class="text-xs text-purple-200 mt-2 opacity-80">Auto-configured features</p>
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
+          
+          <!-- TESS Button -->
+          <button id="tessPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-orange-500/50">
+            <div class="relative z-10">
+              <div class="text-5xl mb-3">🛰️</div>
+              <h5 class="text-xl font-bold text-white mb-2">TESS</h5>
+              <p class="text-sm text-orange-100">Object of Interest 2025</p>
+              <p class="text-xs text-orange-200 mt-2 opacity-80">Latest exoplanet data</p>
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
         </div>
-        
+      </div>
+      
+      <!-- Divider -->
+      <div class="relative mb-8">
+        <div class="absolute inset-0 flex items-center">
+          <div class="w-full border-t border-gray-700"></div>
+        </div>
+        <div class="relative flex justify-center text-sm">
+          <span class="px-4 bg-gray-900 text-gray-400">or use custom data</span>
+        </div>
+      </div>
+      
+      <!-- Custom Data Options -->
+      <div class="space-y-4">
         <!-- Tab Selection -->
         <div class="border-b border-gray-700">
           <div class="flex space-x-4">
             <button id="urlTab" class="px-4 py-2 border-b-2 border-blue-500 text-blue-400 font-medium">URL</button>
             <button id="uploadTab" class="px-4 py-2 text-gray-400 hover:text-gray-200">Upload File</button>
-            <button id="presetTab" class="px-4 py-2 text-gray-400 hover:text-gray-200">Presets</button>
           </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-2">Table Name</label>
+          <input id="tableNameInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="e.g., My Custom Dataset">
         </div>
         
         <!-- URL Input (default) -->
@@ -155,20 +194,11 @@
           </div>
           <p id="uploadFileName" class="text-sm text-gray-400 mt-2"></p>
         </div>
-        
-        <!-- Preset Section (hidden by default) -->
-        <div id="presetSection" class="hidden">
-          <label class="block text-sm font-medium text-gray-300 mb-2">Select Preset</label>
-          <select id="presetSelect" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white">
-            <option value="">-- Select Preset --</option>
-            <option value="kepler">Kepler Object of Interest (KOI) 2025</option>
-            <option value="tess">TESS Object of Interest (TOI) 2025</option>
-          </select>
-        </div>
       </div>
+      
       <div class="flex justify-end space-x-2 mt-6">
         <button id="cancelAddTable" class="px-4 py-2 text-gray-400 hover:bg-gray-800 rounded transition">Cancel</button>
-        <button id="confirmAddTable" class="btn-primary px-4 py-2 rounded">Add Table</button>
+        <button id="confirmAddTable" class="btn-primary px-4 py-2 rounded">Add Custom Table</button>
       </div>
     </div>
   </div>

@@ -107,12 +107,11 @@ function extractFeatures(concatenatedData, mapping, sortedTables) {
   let labelEncoder = null;
   if (mapping.labelMapping && mapping.labelMapping.targetLabels) {
     labelEncoder = buildLabelEncoder(mapping.labelMapping);
-    console.log('Label encoder created:', labelEncoder);
-    console.log('Label encoder has', labelEncoder.numClasses, 'classes');
-    console.log('All mapped values:', Array.from(labelEncoder.valueToIndex.keys()));
   } else {
     console.warn('⚠️ No label mapping found in feature mapping');
   }
+  
+  let skippedCount = 0;
   
   concatenatedData.forEach(rowData => {
     const record = rowData.record;
@@ -120,23 +119,24 @@ function extractFeatures(concatenatedData, mapping, sortedTables) {
     
     // Extract input features - only extract values from columns that belong to this record's table
     const inputRow = [];
-    mapping.inputFeatures.forEach(feature => {
-      // Each feature may have columns from multiple tables
-      // We only extract the value from the column that belongs to this record's source table
-      const columnForThisTable = feature.columns.find(col => col.tableIndex === sourceTableIndex);
-      
-      if (columnForThisTable) {
-        const value = record[columnForThisTable.columnName];
-        inputRow.push(value !== undefined && value !== null ? value : 0);
-      }
-      // Note: If this feature doesn't have a column from this table, we don't add anything
-      // This means different tables may produce different input dimensions if they have different column assignments
-    });
-    inputFeatures.push(inputRow);
+    let hasInvalidFeature = false;
     
-    // Store table metadata
-    tableIndices.push(sourceTableIndex);
-    tableNames.push(sortedTables[sourceTableIndex].tabName);
+    mapping.inputFeatures.forEach(feature => {
+        // Each feature may have columns from multiple tables.
+        // Old implementation always had fixed-length feature vectors. To mimic that
+        // we push 0 when a feature isn't present for this table to keep dimensional consistency.
+        const columnForThisTable = feature.columns.find(col => col.tableIndex === sourceTableIndex);
+        if (columnForThisTable) {
+          const value = record[columnForThisTable.columnName];
+          if (value === null || value === undefined || isNaN(value)) {
+            hasInvalidFeature = true;
+          }
+          inputRow.push(value !== undefined && value !== null ? value : 0);
+        } else {
+          // Fill missing feature with 0 to preserve uniform length
+          inputRow.push(0);
+        }
+    });
     
     // Extract output label - use the output column from this record's source table
     const outputColumnForThisTable = mapping.outputFeature.columns.find(
@@ -150,32 +150,40 @@ function extractFeatures(concatenatedData, mapping, sortedTables) {
     
     // Store output value for display purposes
     const outputKey = outputValue !== null && outputValue !== undefined ? outputValue : 'unknown';
-    outputRawValues.push(outputKey);
     
     // Encode label using label mapping if available
+    let encodedLabel = -1;
     if (labelEncoder) {
       // Try to find encoding for the output value
-      let encodedLabel = null;
-      
       if (outputValue !== null && outputValue !== undefined) {
         encodedLabel = labelEncoder.encode(outputValue);
       }
       
       if (encodedLabel === null) {
-        // Log first few unmapped values for debugging
-        if (outputLabels.filter(l => l === -1).length < 3) {
-          console.warn(`⚠️ Output value "${outputKey}" from table ${sourceTableIndex} not found in label mapping`);
-          console.warn('Available values in label mapping:', Array.from(labelEncoder.valueToIndex.keys()).slice(0, 10));
-        }
-        outputLabels.push(-1); // Use -1 for unmapped values
-      } else {
-        outputLabels.push(encodedLabel);
+        encodedLabel = -1; // Use -1 for unmapped values
       }
     } else {
       // Fallback: use raw output values
-      outputLabels.push(outputValue);
+      encodedLabel = outputValue;
     }
+    
+    // Skip rows with invalid features or labels (like old implementation)
+    if (hasInvalidFeature || encodedLabel === -1) {
+      skippedCount++;
+      return; // Skip this row
+    }
+    
+    // Add valid row
+    inputFeatures.push(inputRow);
+    outputLabels.push(encodedLabel);
+    outputRawValues.push(outputKey);
+    tableIndices.push(sourceTableIndex);
+    tableNames.push(sortedTables[sourceTableIndex].tabName);
   });
+  
+  if (skippedCount > 0) {
+    console.log(`⚠️ Skipped ${skippedCount} rows with invalid features or unmapped labels`);
+  }
   
   return {
     inputs: inputFeatures,
@@ -195,15 +203,37 @@ function buildLabelEncoder(labelMapping) {
   const valueToIndex = new Map();
   const indexToLabel = new Map();
   
-  labelMapping.targetLabels.forEach((label, index) => {
+  // Sort target labels by their index to ensure correct order
+  const sortedLabels = [...labelMapping.targetLabels].sort((a, b) => {
+    const indexA = a.index !== undefined ? a.index : 0;
+    const indexB = b.index !== undefined ? b.index : 0;
+    return indexA - indexB;
+  });
+  
+  sortedLabels.forEach((label) => {
+    // Use the stored index if available, otherwise use array position
+    const labelIndex = label.index !== undefined ? label.index : sortedLabels.indexOf(label);
+    
     // Map each value to its target label index
     label.mappedValues.forEach(value => {
-      valueToIndex.set(value, index);
+      valueToIndex.set(value, labelIndex);
     });
     
     // Map index to label name
-    indexToLabel.set(index, label.name);
+    indexToLabel.set(labelIndex, label.name);
   });
+  
+  // Create the simple labels array like ['CONFIRMED', 'FALSE POSITIVE']
+  const simpleLabelsArray = [];
+  for (let i = 0; i < labelMapping.targetLabels.length; i++) {
+    const labelName = indexToLabel.get(i);
+    if (labelName) {
+      simpleLabelsArray.push(String(labelName));
+    } else {
+      console.error(`❌ ERROR: No label found for index ${i}!`);
+      simpleLabelsArray.push(`Class ${i}`);
+    }
+  }
   
   return {
     numClasses: labelMapping.targetLabels.length,
@@ -216,7 +246,7 @@ function buildLabelEncoder(labelMapping) {
       return indexToLabel.has(index) ? indexToLabel.get(index) : null;
     },
     getAllLabels: () => {
-      return Array.from(indexToLabel.values());
+      return simpleLabelsArray;
     }
   };
 }
@@ -338,7 +368,7 @@ function displayDataInfo(loadResult) {
   document.getElementById('downloadData').disabled = false;
 }
 
-// Prepare tensors from extracted features
+// Prepare tensors from extracted features (NO NORMALIZATION - matches old implementation)
 function prepareTensors(features) {
   // Filter out rows with unmapped labels
   const validIndices = [];
@@ -354,48 +384,131 @@ function prepareTensors(features) {
   const validInputs = validIndices.map(idx => features.inputs[idx]);
   const validOutputs = validIndices.map(idx => features.outputs[idx]);
   
-  // Convert to tensors
-  const xData = tf.tensor2d(validInputs);
+  // Create tensors WITHOUT normalization (like old implementation)
+  const xData = tf.tensor2d(validInputs, [validInputs.length, validInputs[0].length]);
+  
+  // Convert outputs to one-hot encoded tensors
   const yData = tf.oneHot(tf.tensor1d(validOutputs, 'int32'), features.outputDimension);
   
-  return { xData, yData, validCount: validIndices.length };
+  return { 
+    xData, 
+    yData, 
+    validCount: validIndices.length
+  };
 }
 
-// Split data into training and validation sets
-function splitData(xData, yData, validationSplit) {
-  const totalSize = xData.shape[0];
-  const trainSize = Math.floor(totalSize * (1 - validationSplit));
+// Helper: Convert subset of data to tensors (matches old convertToTensors)
+function convertToTensors(data, targets, testSplit, numClasses) {
+  const numExamples = data.length;
   
-  // Shuffle indices and convert to tensor
-  const indices = tf.util.createShuffledIndices(totalSize);
-  const trainIndices = tf.tensor1d(Array.from(indices.slice(0, trainSize)), 'int32');
-  const valIndices = tf.tensor1d(Array.from(indices.slice(trainSize)), 'int32');
+  // Shuffle indices
+  const indices = [];
+  for (let i = 0; i < numExamples; ++i) {
+    indices.push(i);
+  }
+  tf.util.shuffle(indices);
   
-  const xTrain = tf.gather(xData, trainIndices);
-  const yTrain = tf.gather(yData, trainIndices);
-  const xVal = tf.gather(xData, valIndices);
-  const yVal = tf.gather(yData, valIndices);
+  const shuffledData = [];
+  const shuffledTargets = [];
+  for (let i = 0; i < numExamples; ++i) {
+    shuffledData.push(data[indices[i]]);
+    shuffledTargets.push(targets[indices[i]]);
+  }
   
-  // Dispose temporary index tensors
-  trainIndices.dispose();
-  valIndices.dispose();
+  // Split train/test
+  const numTestExamples = Math.round(numExamples * testSplit);
+  const numTrainExamples = numExamples - numTestExamples;
   
-  return { xTrain, yTrain, xVal, yVal };
+  const xDims = shuffledData[0].length;
+  
+  // Create tensors
+  const xs = tf.tensor2d(shuffledData, [numExamples, xDims]);
+  const ys = tf.oneHot(tf.tensor1d(shuffledTargets).toInt(), numClasses);
+  
+  // Split using slice
+  const xTrain = xs.slice([0, 0], [numTrainExamples, xDims]);
+  const xTest = xs.slice([numTrainExamples, 0], [numTestExamples, xDims]);
+  const yTrain = ys.slice([0, 0], [numTrainExamples, numClasses]);
+  const yTest = ys.slice([numTestExamples, 0], [numTestExamples, numClasses]);
+  
+  return [xTrain, yTrain, xTest, yTest];
+}
+
+// Split data into training and validation sets with stratification (EXACTLY like old implementation)
+function splitData(xData, yData, validationSplit, numClasses) {
+  return tf.tidy(() => {
+    // Get raw data arrays from tensors
+    const xArray = xData.arraySync();
+    const yArray = yData.argMax(-1).arraySync();
+    
+    // Group data by class (like old dataByClass)
+    const dataByClass = [];
+    const targetsByClass = [];
+    for (let i = 0; i < numClasses; ++i) {
+      dataByClass.push([]);
+      targetsByClass.push([]);
+    }
+    
+    for (let i = 0; i < xArray.length; ++i) {
+      const target = yArray[i];
+      const data = xArray[i];
+      dataByClass[target].push(data);
+      targetsByClass[target].push(target);
+    }
+    
+    // Group data by class for stratified splitting
+    
+    // Split each class separately (exactly like old splitData)
+    const xTrains = [];
+    const yTrains = [];
+    const xTests = [];
+    const yTests = [];
+    
+    for (let i = 0; i < numClasses; ++i) {
+      const [xTrain, yTrain, xTest, yTest] = 
+          convertToTensors(dataByClass[i], targetsByClass[i], validationSplit, numClasses);
+      xTrains.push(xTrain);
+      yTrains.push(yTrain);
+      xTests.push(xTest);
+      yTests.push(yTest);
+    }
+    
+    // Concatenate all classes (like old implementation)
+    const concatAxis = 0;
+    const xTrain = tf.concat(xTrains, concatAxis);
+    const yTrain = tf.concat(yTrains, concatAxis);
+    const xVal = tf.concat(xTests, concatAxis);
+    const yVal = tf.concat(yTests, concatAxis);
+    
+    // Keep the split data (remove from tidy scope)
+    return {
+      xTrain: tf.keep(xTrain),
+      yTrain: tf.keep(yTrain),
+      xVal: tf.keep(xVal),
+      yVal: tf.keep(yVal)
+    };
+  });
 }
 
 // Train the model
 async function trainModel(features, config, statusContainer) {
   console.log('🚀 Starting model training...');
+
+  // NOTE: Defaults aligned to legacy implementation for higher observed accuracy:
+  // - Batch size 32 (was 512) tends to improve generalization vs. large batches.
+  // - Validation split 0.15 (was 0.20) matches prior stratified holdout.
+  // - Feature vectors now zero-filled for missing table columns to keep fixed dimensionality.
+  // These adjustments aim to reproduce ~87% accuracy previously achieved.
   
-  // Prepare tensors
+  // Prepare tensors (NO normalization - like old implementation)
   statusContainer.innerHTML = '<p class="status-info">📊 Preparing training data...</p>';
   const { xData, yData, validCount } = prepareTensors(features);
   
   console.log(`Training with ${validCount} valid samples`);
   console.log(`Input shape: [${xData.shape}], Output shape: [${yData.shape}]`);
   
-  // Split data
-  const { xTrain, yTrain, xVal, yVal } = splitData(xData, yData, config.validationSplit);
+  // Split data with stratification (maintains class balance in train/val sets)
+  const { xTrain, yTrain, xVal, yVal } = splitData(xData, yData, config.validationSplit, features.outputDimension);
   
   console.log(`Train: ${xTrain.shape[0]} samples, Validation: ${xVal.shape[0]} samples`);
   
@@ -413,6 +526,7 @@ async function trainModel(features, config, statusContainer) {
       tf.layers.dropout({ rate: 0.2 }),
       tf.layers.dense({ units: 64, activation: 'relu' }),
       tf.layers.dense({ units: 8, activation: 'relu' }),
+
       tf.layers.dense({
         units: features.outputDimension,
         activation: 'softmax'
@@ -520,9 +634,8 @@ async function trainModel(features, config, statusContainer) {
   });
   
   const secPerEpoch = (performance.now() - beginMs) / (1000 * config.epochs);
-  console.log(`✅ Training complete: ${secPerEpoch.toFixed(4)} seconds per epoch`);
   
-  // Cleanup
+  // Cleanup tensors
   xData.dispose();
   yData.dispose();
   xTrain.dispose();
@@ -535,6 +648,11 @@ async function trainModel(features, config, statusContainer) {
 
 // Draw confusion matrix
 async function drawConfusionMatrix(model, xVal, yVal, labelEncoder) {
+  if (!labelEncoder) {
+    console.error('❌ No labelEncoder provided!');
+    return;
+  }
+  
   const [preds, labels] = tf.tidy(() => {
     const preds = model.predict(xVal).argMax(-1);
     const labels = yVal.argMax(-1);
@@ -544,16 +662,23 @@ async function drawConfusionMatrix(model, xVal, yVal, labelEncoder) {
   const confMatrixData = await tfvis.metrics.confusionMatrix(labels, preds);
   const container = document.getElementById('confusion-matrix');
   
-  if (container && labelEncoder) {
-    tfvis.render.confusionMatrix(
-      container,
-      {
-        values: confMatrixData,
-        labels: labelEncoder.getAllLabels()
-      },
-      { shadeDiagonal: true }
-    );
+  if (!container) {
+    console.error('❌ Container element not found!');
+    tf.dispose([preds, labels]);
+    return;
   }
+  
+  // Get class names and render
+  const classNames = labelEncoder.getAllLabels();
+  
+  tfvis.render.confusionMatrix(
+    container,
+    {
+      values: confMatrixData,
+      tickLabels: classNames
+    },
+    { shadeDiagonal: true }
+  );
   
   tf.dispose([preds, labels]);
 }
@@ -621,14 +746,27 @@ document.getElementById('startTraining').addEventListener('click', async () => {
       statusMessage.innerHTML = `
         <div class="status-success">
           <p class="status-title">✅ Training Complete!</p>
-          <p class="status-message">Model has been trained successfully.</p>
-          <div class="action-buttons">
-            <button onclick="saveModelLocally()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
-              💾 Save Model Locally
-            </button>
+          <p class="status-message text-green-300">Model auto-saved to browser storage.</p>
+          <div class="mt-4 p-4 rounded-lg bg-green-900/30 border border-green-700/40">
+            <p class="mb-4 text-sm text-green-200">Next: Return to the Data Explorer and press <span class="font-semibold">Predict</span> to apply this model to your selected tables.</p>
+            <button id="goToExplorer" class="bg-green-600 hover:bg-green-500 text-white font-medium px-5 py-2 rounded transition">Go to Explorer & Predict</button>
           </div>
         </div>
       `;
+    }
+    // Auto-save model to local storage
+    try {
+      await model.save('localstorage://exolix-model');
+      console.log('✅ Model auto-saved to localstorage://exolix-model');
+    } catch (e) {
+      console.error('Auto-save failed:', e);
+    }
+    // Wire navigation button (now inside statusMessage)
+    const goBtn = document.getElementById('goToExplorer');
+    if (goBtn) {
+      goBtn.addEventListener('click', () => {
+        window.location.href = 'explorer.html';
+      });
     }
     
   } catch (error) {
@@ -722,25 +860,14 @@ function downloadAsCSV() {
   link.download = `exolix_preprocessed_data_${new Date().toISOString().split('T')[0]}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  
-  console.log(`✅ CSV downloaded with ${rows.length - 1} clean rows (excluded ${extractedFeatures.sampleCount - (rows.length - 1)} unmapped rows)`);
 }
 
 // Initialize
 (async () => {
-  console.log('Initializing training page...');
-  
   // Set TensorFlow.js backend
   await tf.setBackend('webgl');
   await tf.ready();
-  console.log(`✅ TensorFlow.js backend: ${tf.getBackend()}`);
   
   const loadResult = await loadTrainingData();
   displayDataInfo(loadResult);
-  
-  if (loadResult.success) {
-    console.log('✅ Training page initialized successfully');
-  } else {
-    console.log('⚠️ Training page initialization incomplete');
-  }
 })();

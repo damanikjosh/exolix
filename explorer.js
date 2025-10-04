@@ -10,7 +10,10 @@ const state = {
   tables: [], // Array of {id, name, datasetId, gridApi, data, columns, selectedRows}
   activeTableId: null,
   tableCounter: 0,
-  featureMapping: null // Will be loaded from dataStore
+  featureMapping: null, // Will be loaded from dataStore
+  model: null, // Cached loaded TFJS model
+  modelAvailable: false, // Whether saved model exists
+  labelNames: [] // Ordered label names from mapping
 };
 
 // Load feature mapping from database
@@ -19,7 +22,13 @@ async function loadFeatureMapping() {
     const mappingData = await dataStore.getFeatureMapping();
     if (mappingData && mappingData.mapping) {
       state.featureMapping = mappingData.mapping;
-      console.log('✅ Feature mapping loaded:', state.featureMapping);
+      // Build ordered label names if present
+      if (state.featureMapping.labelMapping && Array.isArray(state.featureMapping.labelMapping.targetLabels)) {
+        // Sort by id (index) to ensure consistent order with training one-hot encoding
+        state.labelNames = [...state.featureMapping.labelMapping.targetLabels]
+          .sort((a, b) => a.id - b.id)
+          .map(l => l.name);
+      }
       return true;
     }
   } catch (error) {
@@ -64,7 +73,26 @@ const PRESETS = {
   kepler: {
     name: 'Kepler Object of Interest 2025',
     get url() { return getAssetUrl('data/cumulative_2025.09.29_21.37.15.csv'); },
-    datasetId: 'koi_2025'
+    datasetId: 'koi_2025',
+    // Auto-setup configuration for Kepler preset
+    autoSetup: {
+      featureColumns: [
+        'koi_period',
+        'koi_impact',
+        'koi_duration',
+        'koi_depth',
+        'koi_prad',
+        'koi_teq',
+        'koi_insol',
+        'koi_steff',
+        'koi_slogg',
+        'koi_srad',
+        'ra',
+        'dec',
+        'koi_kepmag'
+      ],
+      labelColumn: 'koi_disposition'
+    }
   },
   tess: {
     name: 'TESS Object of Interest 2025',
@@ -120,6 +148,134 @@ function createColumnDefs(data, tableName) {
   return columnDefs;
 }
 
+// Ensure prediction column exists (pinned right) for a grid
+function ensurePredictionColumn(table) {
+  if (!table || !table.gridApi) return;
+  // Access current column definitions from the grid options
+  const currentDefs = table.gridApi.getColumnDefs ? table.gridApi.getColumnDefs() : null;
+  if (!currentDefs) return;
+  if (currentDefs.some(def => def.field === '__prediction')) return; // already present
+  const newCol = {
+    headerName: 'Prediction',
+    field: '__prediction',
+    pinned: 'right',
+    sortable: true,
+    filter: true,
+    width: 160,
+    cellClass: params => params.value ? 'prediction-cell font-semibold text-green-300 bg-green-900/30' : 'text-gray-600',
+    valueGetter: params => params.data.__prediction || ''
+  };
+  const updated = [...currentDefs, newCol];
+  table.gridApi.setGridOption('columnDefs', updated);
+  // Force refresh to render new pinned column
+  if (table.gridApi.refreshHeader) {
+    table.gridApi.refreshHeader();
+  }
+}
+
+// Detect if saved model exists in localstorage
+async function detectModel() {
+  try {
+    // Dynamic import to avoid loading tfjs until needed if not already present
+    const tf = await import('@tensorflow/tfjs');
+    await tf.ready();
+    const models = await tf.io.listModels();
+    state.modelAvailable = Object.keys(models).includes('localstorage://exolix-model');
+    const btn = document.getElementById('predictWithModel');
+    if (btn) btn.disabled = !state.modelAvailable;
+  } catch (e) {
+    console.warn('Model detection failed:', e);
+  }
+}
+
+// Load model (cached)
+async function loadModelIfNeeded() {
+  if (state.model) return state.model;
+  if (!state.modelAvailable) return null;
+  const tf = await import('@tensorflow/tfjs');
+  await tf.ready();
+  state.model = await tf.loadLayersModel('localstorage://exolix-model');
+  return state.model;
+}
+
+// Build feature vector for a row based on current mapping and table order
+function buildFeatureVectorForRow(row, tableName) {
+  if (!state.featureMapping || !Array.isArray(state.featureMapping.inputFeatures)) return null;
+  const values = [];
+  // For each input feature in order
+  state.featureMapping.inputFeatures.forEach(feature => {
+    // Find mapping entry for this table
+    const col = feature.columns.find(c => c.tableName === tableName);
+    if (!col) {
+      values.push(0); // Missing for this table
+    } else {
+      const v = row[col.columnName];
+      const num = typeof v === 'number' ? v : parseFloat(v);
+      values.push(isFinite(num) ? num : 0);
+    }
+  });
+  return values;
+}
+
+// Run predictions for the active table
+async function runPredictions() {
+  const btn = document.getElementById('predictWithModel');
+  if (btn) btn.disabled = true;
+  try {
+    if (!state.modelAvailable) {
+      alert('No trained model found. Train a model first.');
+      return;
+    }
+    const table = state.tables.find(t => t.id === state.activeTableId);
+    if (!table) {
+      alert('No active table');
+      return;
+    }
+    if (!state.featureMapping || !state.featureMapping.inputFeatures.length) {
+      alert('No feature mapping found. Define features and train first.');
+      return;
+    }
+    // Ensure prediction column present
+    ensurePredictionColumn(table);
+    // Load model
+    const model = await loadModelIfNeeded();
+    if (!model) {
+      alert('Failed to load model');
+      return;
+    }
+    const tf = await import('@tensorflow/tfjs');
+    await tf.ready();
+    const rows = table.data;
+    const featureCount = state.featureMapping.inputFeatures.length;
+    // Batch process
+    const batchSize = 512;
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batchRows = rows.slice(i, i + batchSize);
+      const matrix = batchRows.map(r => buildFeatureVectorForRow(r, table.name));
+      const tensor = tf.tensor2d(matrix, [matrix.length, featureCount]);
+      const preds = model.predict(tensor);
+      const predIndices = preds.argMax(-1).dataSync();
+      // Map to label names if available
+      batchRows.forEach((r, idx) => {
+        const labelIndex = predIndices[idx];
+        if (state.labelNames && state.labelNames[labelIndex] !== undefined) {
+            r.__prediction = state.labelNames[labelIndex];
+        } else {
+            r.__prediction = `Class ${labelIndex}`;
+        }
+      });
+      tf.dispose([tensor, preds]);
+    }
+    // Refresh grid rows
+  table.gridApi.refreshCells({ force: true });
+  } catch (e) {
+    console.error('Prediction error:', e);
+    alert('Error running predictions: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = !state.modelAvailable; // Re-enable if model exists
+  }
+}
+
 // Add a new table
 async function addTable(name, url, datasetId, csvText = null) {
   try {
@@ -146,14 +302,31 @@ async function addTable(name, url, datasetId, csvText = null) {
     
     const columns = data.length > 0 ? Object.keys(data[0]).filter(col => col !== '__internalId') : [];
     
-    // Create tab button
+    // Create tab button with remove button
     const tabNav = document.getElementById('tabNavigation');
     const tabButton = document.createElement('button');
     tabButton.id = `tab_${tableId}`;
-    tabButton.className = 'px-4 py-2 text-gray-600 hover:text-gray-900 transition-all';
-    tabButton.textContent = name;
+    tabButton.className = 'px-4 py-2 text-gray-600 hover:text-gray-900 transition-all flex items-center gap-2';
     tabButton.dataset.tableId = tableId;
+    
+    // Tab name
+    const tabName = document.createElement('span');
+    tabName.textContent = name;
+    tabButton.appendChild(tabName);
+    
+    // Remove button (×)
+    const removeBtn = document.createElement('span');
+    removeBtn.textContent = '×';
+    removeBtn.className = 'label-remove-btn';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent switching to tab when clicking remove
+      removeTable(tableId);
+    });
+    tabButton.appendChild(removeBtn);
+    
+    // Switch to tab when clicking the tab itself
     tabButton.addEventListener('click', () => switchTable(tableId));
+    
     tabNav.appendChild(tabButton);
     
     // Create tab content (same as data.html)
@@ -253,9 +426,6 @@ function switchTable(tableId) {
   // Update selection count
   updateSelectionCount(tableId);
   updateTotalSelectionCount();
-  
-  // Always enable remove button (confirmation will be shown)
-  document.getElementById('removeTableBtn').disabled = false;
 }
 
 // Clear training selection for a specific table
@@ -399,6 +569,123 @@ function updateTotalSelectionCount() {
   document.getElementById('sendToTraining').disabled = totalCount === 0;
 }
 
+// Send to training with auto-setup for presets
+async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
+  console.log(`🎯 Auto-setup training for ${presetKey} preset`);
+  
+  if (state.tables.length === 0) {
+    alert('No tables loaded!');
+    return;
+  }
+  
+  // Filter to only include tables with selected rows
+  const tablesWithData = state.tables.filter(table => table.selectedRows.length > 0);
+  
+  if (tablesWithData.length === 0) {
+    alert('No rows selected!');
+    return;
+  }
+  
+  console.log(`📊 Preparing ${tablesWithData.length} table(s) with data`);
+  
+  const tablesData = tablesWithData.map((table, index) => {
+    const selectedIds = table.selectedRows.map(row => row.__internalId);
+    const selectedRecords = table.selectedRows;
+    
+    return {
+      datasetId: table.datasetId,
+      selectedIds,
+      selectedRecords,
+      columns: table.columns,
+      tabName: table.name,
+      tabOrder: index
+    };
+  });
+  
+  try {
+    console.log('🎯 Applying auto-setup feature mapping...');
+    
+    // Create feature mapping in the same format as mapping.js
+    // Build base feature mapping
+    const featureMapping = {
+      inputFeatures: autoSetupConfig.featureColumns.map(columnName => ({
+        columns: tablesData.map((table, tableIndex) => ({
+          tableIndex: tableIndex,
+          columnName: columnName,
+          tableName: table.tabName
+        }))
+      })),
+      outputFeature: {
+        columns: tablesData.map((table, tableIndex) => ({
+          tableIndex: tableIndex,
+          columnName: autoSetupConfig.labelColumn,
+          tableName: table.tabName
+        }))
+      },
+      labelMapping: null,
+      tableOrder: tablesData.map(t => t.tabName)
+    };
+
+    // Apply Kepler preset label collapsing if kepler
+    if (presetKey === 'kepler') {
+      try {
+        // Collect unique disposition values from first table's selected records (others assumed aligned)
+        const rawValuesSet = new Set();
+        const labelCol = autoSetupConfig.labelColumn;
+        tablesData.forEach(t => {
+          // each t.selectedRecords contains full row objects
+          t.selectedRecords.forEach(r => {
+            const v = r[labelCol];
+            if (v !== undefined && v !== null && v !== '') {
+              rawValuesSet.add(String(v).trim());
+            }
+          });
+        });
+        const uniqueValues = Array.from(rawValuesSet).sort();
+        // Define canonical groups
+        const candidateGroup = ['CANDIDATE', 'CONFIRMED'];
+        const falsePositiveGroup = ['FALSE POSITIVE'];
+        // Filter to only those actually present
+        const candidatePresent = candidateGroup.filter(v => rawValuesSet.has(v));
+        const falsePositivePresent = falsePositiveGroup.filter(v => rawValuesSet.has(v));
+        if (candidatePresent.length || falsePositivePresent.length) {
+          let labelCounter = 0;
+            featureMapping.labelMapping = {
+              uniqueValues,
+              targetLabels: [
+                { id: `label_${++labelCounter}`, name: 'CANDIDATE', mappedValues: candidatePresent },
+                { id: `label_${++labelCounter}`, name: 'FALSE POSITIVE', mappedValues: falsePositivePresent }
+              ].filter(l => l.mappedValues.length > 0)
+            };
+          console.log('🪐 Applied Kepler label collapse:', featureMapping.labelMapping);
+        }
+      } catch (e) {
+        console.warn('Kepler preset label collapse failed:', e);
+      }
+    }
+    
+    console.log(`✅ Auto-mapped ${autoSetupConfig.featureColumns.length} input features`);
+    console.log(`📋 Features: ${autoSetupConfig.featureColumns.join(', ')}`);
+    console.log(`🏷️  Label: ${autoSetupConfig.labelColumn}`);
+    
+    // Save feature mapping
+    await dataStore.saveFeatureMapping(featureMapping);
+    
+    // Save training selection
+    await dataStore.saveTrainingSelection({ tables: tablesData });
+    
+    console.log('✅ Auto-setup complete - navigating to mapping.html...');
+    
+    // Navigate to feature mapping page
+    window.location.href = 'mapping.html';
+    
+  } catch (e) {
+    console.error('❌ Error in auto-setup:', e);
+    console.error('Error stack:', e.stack);
+    alert('Error in auto-setup: ' + e.message);
+  }
+}
+
 // Send to training
 async function sendToTraining() {
   console.log('🚀 sendToTraining called');
@@ -498,7 +785,6 @@ document.getElementById('addTableBtn').addEventListener('click', () => {
   document.getElementById('addTableModal').classList.remove('hidden');
   document.getElementById('tableNameInput').value = '';
   document.getElementById('csvUrlInput').value = '';
-  document.getElementById('presetSelect').value = '';
   document.getElementById('uploadFileName').textContent = '';
   uploadedFile = null;
   
@@ -510,6 +796,80 @@ document.getElementById('cancelAddTable').addEventListener('click', () => {
   document.getElementById('addTableModal').classList.add('hidden');
 });
 
+// Kepler Preset Button Handler
+document.getElementById('keplerPresetBtn').addEventListener('click', async () => {
+  try {
+    const preset = PRESETS.kepler;
+    const name = preset.name;
+    const url = preset.url;
+    const datasetId = `dataset_${Date.now()}`;
+    
+    // Close modal immediately
+    document.getElementById('addTableModal').classList.add('hidden');
+    
+    console.log('🪐 Kepler preset selected - loading data...');
+    
+    // Load the table
+    const tableId = await addTable(name, url, datasetId, null);
+    
+    // Auto-setup with Kepler configuration
+    if (tableId && preset.autoSetup) {
+      console.log('🎯 Triggering auto-setup...');
+      
+      // Select all rows automatically
+      const table = state.tables.find(t => t.id === tableId);
+      if (table && table.gridApi) {
+        table.gridApi.selectAll();
+        updateSelectionCount(tableId);
+        updateTotalSelectionCount();
+        
+        // Small delay to ensure selection is processed
+        setTimeout(async () => {
+          await sendToTrainingWithAutoSetup('kepler', preset.autoSetup);
+        }, 100);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading Kepler preset:', error);
+    alert('Error loading Kepler preset: ' + error.message);
+  }
+});
+
+// TESS Preset Button Handler
+document.getElementById('tessPresetBtn').addEventListener('click', async () => {
+  try {
+    const preset = PRESETS.tess;
+    const name = preset.name;
+    const url = preset.url;
+    const datasetId = `dataset_${Date.now()}`;
+    
+    // Close modal immediately
+    document.getElementById('addTableModal').classList.add('hidden');
+    
+    console.log('🛰️ TESS preset selected - loading data...');
+    
+    // Load the table (no auto-setup for TESS yet)
+    await addTable(name, url, datasetId, null);
+    
+    // If TESS has auto-setup in the future, add it here
+    if (preset.autoSetup) {
+      const table = state.tables.find(t => t.id === state.activeTableId);
+      if (table && table.gridApi) {
+        table.gridApi.selectAll();
+        updateSelectionCount(state.activeTableId);
+        updateTotalSelectionCount();
+        
+        setTimeout(async () => {
+          await sendToTrainingWithAutoSetup('tess', preset.autoSetup);
+        }, 100);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading TESS preset:', error);
+    alert('Error loading TESS preset: ' + error.message);
+  }
+});
+
 // Tab switching in modal
 function switchUploadMode(mode) {
   currentUploadMode = mode;
@@ -517,19 +877,17 @@ function switchUploadMode(mode) {
   // Update tab styles
   const tabs = {
     url: document.getElementById('urlTab'),
-    upload: document.getElementById('uploadTab'),
-    preset: document.getElementById('presetTab')
+    upload: document.getElementById('uploadTab')
   };
   
   const sections = {
     url: document.getElementById('urlSection'),
-    upload: document.getElementById('uploadSection'),
-    preset: document.getElementById('presetSection')
+    upload: document.getElementById('uploadSection')
   };
   
   // Reset all tabs
   Object.values(tabs).forEach(tab => {
-    tab.className = 'px-4 py-2 text-gray-600 hover:text-gray-900';
+    tab.className = 'px-4 py-2 text-gray-400 hover:text-gray-200';
   });
   
   // Hide all sections
@@ -538,7 +896,7 @@ function switchUploadMode(mode) {
   });
   
   // Activate selected tab
-  tabs[mode].className = 'px-4 py-2 border-b-2 border-indigo-600 text-indigo-600 font-medium';
+  tabs[mode].className = 'px-4 py-2 border-b-2 border-blue-500 text-blue-400 font-medium';
   sections[mode].classList.remove('hidden');
   
   // Setup drag and drop when switching to upload tab
@@ -553,7 +911,6 @@ function switchUploadMode(mode) {
 
 document.getElementById('urlTab').addEventListener('click', () => switchUploadMode('url'));
 document.getElementById('uploadTab').addEventListener('click', () => switchUploadMode('upload'));
-document.getElementById('presetTab').addEventListener('click', () => switchUploadMode('preset'));
 
 // Unified file selection handler
 function handleFileSelection(file) {
@@ -659,13 +1016,6 @@ function initializeDragDrop() {
   console.log('✅ Drag and drop initialized successfully');
 }
 
-document.getElementById('presetSelect').addEventListener('change', (e) => {
-  const preset = PRESETS[e.target.value];
-  if (preset) {
-    document.getElementById('tableNameInput').value = preset.name;
-  }
-});
-
 document.getElementById('confirmAddTable').addEventListener('click', async () => {
   const name = document.getElementById('tableNameInput').value.trim();
   
@@ -693,14 +1043,6 @@ document.getElementById('confirmAddTable').addEventListener('click', async () =>
       // Read file content
       csvText = await readFileAsText(uploadedFile);
       url = `uploaded://${uploadedFile.name}`; // Virtual URL for storage
-    } else if (currentUploadMode === 'preset') {
-      const presetKey = document.getElementById('presetSelect').value;
-      if (!presetKey) {
-        alert('Please select a preset');
-        return;
-      }
-      const preset = PRESETS[presetKey];
-      url = preset.url;
     }
     
     document.getElementById('addTableModal').classList.add('hidden');
@@ -724,13 +1066,12 @@ function readFileAsText(file) {
   });
 }
 
-document.getElementById('removeTableBtn').addEventListener('click', async () => {
-  if (state.activeTableId) {
-    await removeTable(state.activeTableId);
-  }
-});
-
 document.getElementById('sendToTraining').addEventListener('click', sendToTraining);
+// Prediction button listener
+const predictBtn = document.getElementById('predictWithModel');
+if (predictBtn) {
+  predictBtn.addEventListener('click', runPredictions);
+}
 
 // Show/hide empty state guide
 function updateEmptyState() {
@@ -822,6 +1163,8 @@ window.addEventListener('focus', async () => {
   
   // Load feature mapping first
   await loadFeatureMapping();
+  // Detect existing model to enable prediction button
+  await detectModel();
   
   // Load persistent tables
   await loadPersistentTables();

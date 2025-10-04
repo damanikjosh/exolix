@@ -42,9 +42,14 @@
       <div class="card rounded-xl p-6">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-semibold text-white">Neural Network Features</h2>
-          <button id="addFeatureBtn" class="px-3 py-1 btn-primary text-sm rounded transition">
-            + Add Input Feature
-          </button>
+          <div class="flex items-center gap-2">
+            <button id="addAllFeaturesBtn" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded transition" title="Create one input feature per available column across all tables (only columns present in every table).">
+              + Add All Columns
+            </button>
+            <button id="addFeatureBtn" class="px-3 py-1 btn-primary text-sm rounded transition">
+              + Add Input Feature
+            </button>
+          </div>
         </div>
 
         <!-- Input Features -->

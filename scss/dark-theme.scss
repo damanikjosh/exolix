@@ -779,9 +779,9 @@ a {
 .label-remove-btn,
 .remove-value-btn {
   margin-left: 0.5rem;
-  color: #a5b4fc;
+  color: #9ca3af; // text-gray-400
   font-size: 1.25rem;
-  font-weight: 700;
+  font-weight: 400;
   cursor: pointer;
   background: none;
   border: none;
@@ -790,7 +790,7 @@ a {
   transition: color 0.2s;
   
   &:hover {
-    color: #c7d2fe;
+    color: #f87171; // text-red-400
   }
 }
 
