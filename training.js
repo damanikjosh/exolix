@@ -522,11 +522,10 @@ async function trainModel(features, config, statusContainer) {
         units: 1024,
         activation: 'sigmoid'
       }),
-      tf.layers.batchNormalization(),
+      // tf.layers.batchNormalization(),
       tf.layers.dropout({ rate: 0.2 }),
-      tf.layers.dense({ units: 64, activation: 'relu' }),
-      tf.layers.dense({ units: 8, activation: 'relu' }),
-
+      tf.layers.dense({ units: 64, activation: 'sigmoid' }),
+      tf.layers.dense({ units: 8, activation: 'sigmoid' }),
       tf.layers.dense({
         units: features.outputDimension,
         activation: 'softmax'

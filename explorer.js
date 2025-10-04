@@ -91,7 +91,13 @@ const PRESETS = {
         'dec',
         'koi_kepmag'
       ],
-      labelColumn: 'koi_disposition'
+      labelColumn: 'koi_disposition',
+      // First step refactor: move label grouping definition into preset config
+      // (semantic equivalent to previous inline candidate/false positive grouping)
+      labelGroups: [
+        { name: 'CANDIDATE', values: ['CONFIRMED'] },
+        { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE'] }
+      ]
     }
   },
   tess: {
@@ -642,22 +648,22 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
           });
         });
         const uniqueValues = Array.from(rawValuesSet).sort();
-        // Define canonical groups
-        const candidateGroup = ['CANDIDATE', 'CONFIRMED'];
-        const falsePositiveGroup = ['FALSE POSITIVE'];
-        // Filter to only those actually present
-        const candidatePresent = candidateGroup.filter(v => rawValuesSet.has(v));
-        const falsePositivePresent = falsePositiveGroup.filter(v => rawValuesSet.has(v));
-        if (candidatePresent.length || falsePositivePresent.length) {
-          let labelCounter = 0;
-            featureMapping.labelMapping = {
-              uniqueValues,
-              targetLabels: [
-                { id: `label_${++labelCounter}`, name: 'CANDIDATE', mappedValues: candidatePresent },
-                { id: `label_${++labelCounter}`, name: 'FALSE POSITIVE', mappedValues: falsePositivePresent }
-              ].filter(l => l.mappedValues.length > 0)
-            };
-          console.log('🪐 Applied Kepler label collapse:', featureMapping.labelMapping);
+        // Use preset-defined labelGroups (moved from inline logic)
+        const groups = Array.isArray(autoSetupConfig.labelGroups) ? autoSetupConfig.labelGroups : [];
+        const targetLabels = [];
+        let labelCounter = 0;
+        groups.forEach(g => {
+          // Only include values actually present in data
+            const present = g.values.filter(v => rawValuesSet.has(v));
+            if (present.length) {
+              targetLabels.push({ id: `label_${++labelCounter}`, name: g.name, mappedValues: present });
+            }
+        });
+        if (targetLabels.length) {
+          featureMapping.labelMapping = { uniqueValues, targetLabels };
+          console.log('🪐 Applied Kepler label grouping from preset config:', featureMapping.labelMapping);
+        } else {
+          console.log('⚠️ No preset label groups matched present values. uniqueValues:', uniqueValues);
         }
       } catch (e) {
         console.warn('Kepler preset label collapse failed:', e);
