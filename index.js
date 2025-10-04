@@ -16,6 +16,7 @@
  */
 
 import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs-backend-webgl';
 import * as tfvis from '@tensorflow/tfjs-vis';
 
 import * as data from './data';
@@ -213,6 +214,11 @@ async function iris() {
   document.getElementById('train-form')
       .addEventListener('submit', async (event) => {
         event.preventDefault();
+        // Add assert
+        if (!csvData) {
+          alert('Please upload and parse a CSV file first.');
+          return;
+        }
         // Log all form data
         const formData = new FormData(event.target);
         // for (const [key, value] of formData.entries()) {
@@ -291,4 +297,6 @@ async function iris() {
 //   ui.renderMapping(mappingDiv, data.FEATURES); // Render with no options initially
 // });
 
+tf.setBackend('webgl');
+console.log(`Backend set to: ${tf.getBackend()}`);
 iris();
