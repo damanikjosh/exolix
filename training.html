@@ -23,8 +23,82 @@
       </div>
     </div>
 
-    <!-- Training Configuration -->
-    <div class="card rounded-xl p-6 mb-6">
+    <!-- Input Mode Selection (Large Buttons) -->
+    <div id="inputModeCard" class="card rounded-xl p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-5 text-white">Select Training Input Mode</h2>
+      <div class="grid md:grid-cols-2 gap-6">
+        <button id="chooseRawMode" class="group relative w-full text-left bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700/70 hover:border-blue-500/70 hover:from-gray-700 hover:to-gray-800 rounded-xl p-5 transition shadow-md hover:shadow-blue-500/10">
+          <div class="flex items-start gap-4">
+            <div class="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600/20 text-blue-300 font-semibold text-lg group-hover:bg-blue-600/30">R</div>
+            <div>
+              <p class="font-semibold text-white mb-1">Raw Tabular Features</p>
+              <p class="text-xs text-gray-400 leading-snug">Use the engineered numeric features directly with the legacy 1024→64→8 MLP.</p>
+            </div>
+          </div>
+          <div class="absolute top-3 right-3 text-[10px] tracking-wide uppercase text-gray-500 group-hover:text-blue-300">Baseline</div>
+        </button>
+        <button id="chooseEmbeddingMode" class="group relative w-full text-left bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700/70 hover:border-purple-500/70 hover:from-gray-700 hover:to-gray-800 rounded-xl p-5 transition shadow-md hover:shadow-purple-500/10">
+          <div class="flex items-start gap-4">
+            <div class="h-10 w-10 flex items-center justify-center rounded-lg bg-purple-600/20 text-purple-300 font-semibold text-lg group-hover:bg-purple-600/30">E</div>
+            <div>
+              <p class="font-semibold text-white mb-1">LLM Embedding Mode</p>
+              <p class="text-xs text-gray-400 leading-snug">Generate a semantic embedding from a prompt template, then train the same MLP on that embedding matrix.</p>
+            </div>
+          </div>
+          <div class="absolute top-3 right-3 text-[10px] tracking-wide uppercase text-gray-500 group-hover:text-purple-300">Semantic</div>
+        </button>
+      </div>
+      <p class="mt-5 text-xs text-gray-400">After selecting a mode this panel will hide. For embeddings you'll configure the prompt before training.</p>
+    </div>
+
+    <!-- LLM Prompt Builder -->
+    <div class="card rounded-xl p-6 mb-6 hidden" id="promptBuilderCard">
+      <div class="flex items-start justify-between flex-wrap gap-4">
+        <h2 class="text-xl font-semibold text-white">LLM Prompt Template</h2>
+        <div class="flex gap-3 text-xs">
+          <button id="pbGenerateEmbedding" class="btn-primary px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed">Generate Embedding</button>
+          <button id="pbClearEmbedding" class="px-4 py-2 rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed">Reset</button>
+        </div>
+      </div>
+      <div id="llmEmbeddingSummary" class="mt-3 hidden text-xs text-green-300"></div>
+      <p class="text-xs text-gray-400 mt-2">Compose a descriptive instruction referencing features with placeholders like <code>{{0}}</code>, <code>{{1}}</code>. Click feature pills to insert placeholders at the cursor.</p>
+      <div class="mt-6 grid md:grid-cols-12 gap-6">
+        <!-- Feature pills -->
+        <div class="md:col-span-4 lg:col-span-3">
+          <h3 class="text-sm font-semibold text-gray-200 mb-3">Features</h3>
+          <div id="pbFeaturePills" class="flex flex-wrap gap-2"></div>
+          <div class="mt-4 text-xs text-gray-500" id="pbFeatureMeta"></div>
+        </div>
+        <!-- Editor -->
+        <div class="md:col-span-8 lg:col-span-9">
+          <div id="pbEditor" class="relative">
+            <div id="pbTemplateEditor" class="min-h-[220px] w-full rounded border border-gray-700 bg-gray-900 p-4 text-sm text-gray-200 focus:outline-none prose prose-invert max-w-none" contenteditable="true" spellcheck="false"></div>
+            <div class="absolute top-2 right-2 text-[10px] text-gray-500">Rich Text</div>
+          </div>
+          <div class="mt-2 flex justify-between text-xs text-gray-400">
+            <span id="pbPlaceholderHint">Use placeholders like {{0}}.</span>
+            <span id="pbCharCount">0 chars</span>
+          </div>
+          <div id="pbEditorError" class="mt-2 text-xs text-red-400 hidden"></div>
+        </div>
+      </div>
+      <div class="mt-6 hidden" id="pbProgressWrap">
+        <div class="flex justify-between text-xs text-gray-400 mb-1">
+          <span id="pbProgLabel">Preparing…</span>
+          <span id="pbProgTime">--s</span>
+        </div>
+        <div class="w-full h-2 bg-gray-800 rounded">
+          <div id="pbProgFill" class="h-2 bg-blue-500 rounded" style="width:0%"></div>
+        </div>
+      </div>
+      <div id="pbEmbeddingPreview" class="mt-6 hidden">
+        <h3 class="text-sm font-semibold text-gray-200 mb-2">Embedding Preview</h3>
+        <pre class="text-xs bg-gray-900 border border-gray-800 rounded p-3 overflow-x-auto whitespace-pre-wrap" id="pbEmbedPreviewBlock"></pre>
+      </div>
+    </div>
+
+    <!-- Training Configuration (relocated below prompt builder, hidden until mode ready) -->
+    <div id="trainingConfigCard" class="card rounded-xl p-6 mb-6 hidden">
       <h2 class="text-xl font-semibold mb-4 text-white">Training Configuration</h2>
       <div class="grid md:grid-cols-2 gap-4">
         <div>
@@ -45,64 +119,10 @@
         </div>
       </div>
     </div>
-    <!-- Prompt Builder (KOI / TESS) -->
-    <div class="card rounded-xl p-6 mb-6" id="promptBuilderCard">
-      <h2 class="text-xl font-semibold mb-4 text-white">Prompt Builder (KOI / TESS)</h2>
-
-      <!-- Dataset & Template -->
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">Dataset</label>
-          <select id="pbDataset" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white">
-            <option value="KOI">Kepler Object of Interest (KOI)</option>
-            <option value="TESS">TESS Objects</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">Prompt Template</label>
-          <textarea id="pbTemplate" rows="3"
-            class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white"
-            placeholder="Use {{placeholders}} that match feature keys below"></textarea>
-          <p class="text-xs text-gray-400 mt-1">
-            Tip: Use <code>{{index}}</code> placeholders, e.g. <code>{{0}}</code>, <code>{{1}}</code>. Indices map to columns of the data matrix.          </p>
-        </div>
-      </div>
-
-      <!-- Dynamic feature fields -->
-      <div class="mt-6">
-        <h3 class="text-lg font-semibold text-white mb-2">Features</h3>
-        <div id="pbFields" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-      </div>
-
-      <!-- Actions + Progress -->
-      <div class="mt-6 flex items-center gap-4">
-        <button id="pbSendBtn"
-          class="btn-primary px-6 py-3 rounded-lg font-semibold disabled:bg-gray-700 disabled:cursor-not-allowed transition">
-          Send to LLM
-        </button>
-
-        <div id="pbProgressWrap" class="flex-1 hidden">
-          <div class="flex justify-between text-xs text-gray-400 mb-1">
-            <span id="pbProgLabel">Preparing…</span>
-            <span id="pbProgTime">--s</span>
-          </div>
-          <div class="w-full h-2 bg-gray-800 rounded">
-            <div id="pbProgFill" class="h-2 bg-blue-500 rounded" style="width:0%"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Live prompt preview -->
-      <div class="mt-6">
-        <h3 class="text-lg font-semibold text-white mb-2">Preview</h3>
-        <pre id="pbPreview"
-          class="whitespace-pre-wrap text-gray-200 bg-gray-900 border border-gray-800 rounded p-3 text-sm"></pre>
-      </div>
-    </div>
 
     <!-- Actions -->
     <div class="flex flex-wrap gap-4">
-      <button id="startTraining" class="btn-primary px-6 py-3 rounded-lg font-semibold disabled:bg-gray-700 disabled:cursor-not-allowed transition">
+      <button id="startTraining" class="hidden btn-primary px-6 py-3 rounded-lg font-semibold disabled:bg-gray-700 disabled:cursor-not-allowed transition">
         Start Training
       </button>
       <button id="downloadData" class="px-4 py-2 text-gray-400 hover:bg-gray-800 rounded transition disabled:opacity-50 disabled:cursor-not-allowed">

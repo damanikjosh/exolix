@@ -672,6 +672,7 @@ async function autoSaveFeatureMapping() {
     
     const featureMapping = {
       inputFeatures: validInputs.map(f => ({
+        featureName: (() => { const m = f.id.match(/input_(\d+)/); return `Input Feature ${m ? m[1] : ''}`.trim(); })(),
         columns: f.mappedColumns.sort((a, b) => a.tableIndex - b.tableIndex)
       })),
       outputFeature: state.outputFeature || { columns: [] },
@@ -778,6 +779,7 @@ async function proceedToTraining() {
   // Prepare feature mapping configuration
   const featureMapping = {
     inputFeatures: validInputs.map(f => ({
+      featureName: (() => { const m = f.id.match(/input_(\d+)/); return `Input Feature ${m ? m[1] : ''}`.trim(); })(),
       columns: f.mappedColumns.sort((a, b) => a.tableIndex - b.tableIndex) // Ensure table order
     })),
     outputFeature: {

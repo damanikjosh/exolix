@@ -812,6 +812,21 @@ a {
   }
 }
 
+// Feature pills (semantic alias of value-chip with click behavior)
+.feature-pill {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  &:hover {
+    background-color: rgba(99, 102, 241, 0.28);
+  }
+  &:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+  }
+}
+
 // Label encoding badge - just use info-card with green variant
 .label-encoding-badge {
   @extend .info-card;

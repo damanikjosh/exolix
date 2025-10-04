@@ -8,6 +8,9 @@ let trainingData = [];
 let featureMapping = null;
 let extractedFeatures = null;
 let model = null;
+let inputMode = null; // set after user chooses raw or embedding
+let embeddingMatrix = null; // N x E from LLM
+let embeddingMeta = null; // { rows, dims, prompt }
 
 // Load training data from IndexedDB (multi-table approach)
 async function loadTrainingData() {
@@ -519,7 +522,23 @@ function splitData(xData, yData, validationSplit, numClasses) {
   });
 }
 
-// Train the model
+// Build model architectures (separate legacy raw vs embedding-enhanced)
+function buildModel(inputDim, outputDim, mode) {
+  // EXACT legacy model (applies to both raw & LLM modes):
+  //  Layers: 1024 (sigmoid) -> Dropout(0.2) -> 64 (sigmoid) -> 8 (sigmoid) -> softmax
+  //  This intentionally keeps the original smaller mid / deep layers.
+  return tf.sequential({
+    layers: [
+      tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'sigmoid' }),
+      tf.layers.dropout({ rate: 0.2 }),
+      tf.layers.dense({ units: 64, activation: 'sigmoid' }),
+      tf.layers.dense({ units: 8, activation: 'sigmoid' }),
+      tf.layers.dense({ units: outputDim, activation: 'softmax' })
+    ]
+  });
+}
+
+// Train the model (features may be original or replaced by embeddingMatrix)
 async function trainModel(features, config, statusContainer) {
   console.log('🚀 Starting model training...');
 
@@ -531,36 +550,35 @@ async function trainModel(features, config, statusContainer) {
   
   // Prepare tensors (NO normalization - like old implementation)
   statusContainer.innerHTML = '<p class="status-info">📊 Preparing training data...</p>';
-  const { xData, yData, validCount } = prepareTensors(features);
+  // If embedding mode active, substitute features.inputs with embedding matrix
+  let workingFeatures = features;
+  if (inputMode === 'llm-embedding' && embeddingMatrix && Array.isArray(embeddingMatrix) && embeddingMatrix.length) {
+    console.log('[training] Using LLM embedding matrix for training');
+    // Clone shallow and override inputs & inputDimension
+    workingFeatures = { ...features, inputs: embeddingMatrix, inputDimension: embeddingMatrix[0].length };
+    console.log('[training] Embedding stats rows=', embeddingMatrix.length, 'dims=', embeddingMatrix[0].length);
+  } else if (inputMode === 'llm-embedding') {
+    throw new Error('Input mode set to LLM embedding but no embedding matrix present. Generate embeddings first.');
+  }
+
+  const { xData, yData, validCount } = prepareTensors(workingFeatures);
   
   console.log(`Training with ${validCount} valid samples`);
   console.log(`Input shape: [${xData.shape}], Output shape: [${yData.shape}]`);
   
   // Split data with stratification (maintains class balance in train/val sets)
-  const { xTrain, yTrain, xVal, yVal } = splitData(xData, yData, config.validationSplit, features.outputDimension);
+  const { xTrain, yTrain, xVal, yVal } = splitData(xData, yData, config.validationSplit, workingFeatures.outputDimension);
   
   console.log(`Train: ${xTrain.shape[0]} samples, Validation: ${xVal.shape[0]} samples`);
   
   // Build model
   statusContainer.innerHTML = '<p class="status-info">🏗️ Building neural network...</p>';
   
-  const model = tf.sequential({
-    layers: [
-      tf.layers.dense({
-        inputShape: [xTrain.shape[1]],
-        units: 1024,
-        activation: 'sigmoid'
-      }),
-      // tf.layers.batchNormalization(),
-      tf.layers.dropout({ rate: 0.2 }),
-      tf.layers.dense({ units: 64, activation: 'sigmoid' }),
-      tf.layers.dense({ units: 8, activation: 'sigmoid' }),
-      tf.layers.dense({
-        units: features.outputDimension,
-        activation: 'softmax'
-      })
-    ]
-  });
+  if (inputMode === 'llm-embedding' && xTrain.shape[1] !== workingFeatures.inputDimension) {
+    console.warn('[training] Dimension mismatch: tensor dim', xTrain.shape[1], 'metadata dim', workingFeatures.inputDimension);
+  }
+  const model = buildModel(xTrain.shape[1], workingFeatures.outputDimension, inputMode);
+  console.log('[training] Legacy model (1024->64->8) firstLayer=', model.layers[0].units, 'inputDim=', xTrain.shape[1], 'mode=', inputMode);
   
   model.summary();
   
@@ -656,7 +674,7 @@ async function trainModel(features, config, statusContainer) {
         }
         
         // Update confusion matrix
-        await drawConfusionMatrix(model, xVal, yVal, features.labelEncoder);
+        await drawConfusionMatrix(model, xVal, yVal, workingFeatures.labelEncoder);
       }
     }
   });
@@ -898,4 +916,71 @@ function downloadAsCSV() {
   
   const loadResult = await loadTrainingData();
   displayDataInfo(loadResult);
+
+  // Large mode selection buttons
+  const inputModeCard = document.getElementById('inputModeCard');
+  const startBtn = document.getElementById('startTraining');
+  const promptCard = document.getElementById('promptBuilderCard');
+  const configCard = document.getElementById('trainingConfigCard');
+  function revealStartIfReady() {
+    if (inputMode === 'raw') {
+      startBtn.classList.remove('hidden');
+      configCard?.classList.remove('hidden');
+    } else if (inputMode === 'llm-embedding' && embeddingMatrix) {
+      startBtn.classList.remove('hidden');
+      configCard?.classList.remove('hidden');
+    }
+  }
+  const rawBtn = document.getElementById('chooseRawMode');
+  const embBtn = document.getElementById('chooseEmbeddingMode');
+  rawBtn?.addEventListener('click', () => {
+    inputMode = 'raw';
+    inputModeCard?.classList.add('hidden');
+    promptCard?.classList.add('hidden');
+    revealStartIfReady();
+  });
+  embBtn?.addEventListener('click', () => {
+    inputMode = 'llm-embedding';
+    inputModeCard?.classList.add('hidden');
+    promptCard?.classList.remove('hidden');
+    // Start button only after embedding generated
+  });
 })();
+
+// Allow promptflow.js (or future embedding UI) to inject embedding result
+window.__setLLMEmbedding = function(payload) {
+  try {
+    if (!payload) return;
+    const emb = payload.embedding || payload.data || payload.emb;
+    if (Array.isArray(emb) && emb.length && Array.isArray(emb[0])) {
+      embeddingMatrix = emb;
+      embeddingMeta = { rows: emb.length, dims: emb[0].length, receivedAt: Date.now() };
+      console.log('[training] ✅ LLM embedding stored', embeddingMeta);
+      const sumEl = document.getElementById('llmEmbeddingSummary');
+      if (sumEl) {
+        sumEl.classList.remove('hidden');
+        sumEl.textContent = `Embedding ready: ${embeddingMeta.rows} rows × ${embeddingMeta.dims} dims. Training will use this instead of raw features.`;
+      }
+      // Reveal start training after embedding ready
+      const startBtn = document.getElementById('startTraining');
+      if (startBtn) startBtn.classList.remove('hidden');
+      const configCard = document.getElementById('trainingConfigCard');
+      if (configCard) configCard.classList.remove('hidden');
+    } else {
+      console.warn('[training] Invalid embedding payload shape');
+    }
+  } catch (e) {
+    console.error('[training] Failed to set embedding', e);
+  }
+};
+
+// Allow prompt builder reset to clear embedding & hide start button if embedding mode
+window.__clearLLMEmbedding = function() {
+  if (inputMode === 'llm-embedding') {
+    embeddingMatrix = null;
+    const startBtn = document.getElementById('startTraining');
+    if (startBtn) startBtn.classList.add('hidden');
+    const sumEl = document.getElementById('llmEmbeddingSummary');
+    if (sumEl) sumEl.classList.add('hidden');
+  }
+};
