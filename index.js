@@ -41,6 +41,7 @@ async function trainModel(xTrain, yTrain, xTest, yTest) {
   ui.status('Training model... Please wait.');
 
   const params = ui.loadTrainParametersFromUI();
+  const batchSize = params.batchSize || 32; // Default batch size is 32 if not provided
 
   // Define the topology of the model: two dense layers.
   const model = tf.sequential();
@@ -60,25 +61,27 @@ async function trainModel(xTrain, yTrain, xTest, yTest) {
   const lossContainer = document.getElementById('lossCanvas');
   const accContainer = document.getElementById('accuracyCanvas');
   const beginMs = performance.now();
-  // Call `model.fit` to train the model.
+
+  // Call `model.fit` to train the model with batching.
   const history = await model.fit(xTrain, yTrain, {
     epochs: params.epochs,
+    batchSize: batchSize, // Add batching here
     validationData: [xTest, yTest],
     callbacks: {
       onEpochEnd: async (epoch, logs) => {
-        // Plot the loss and accuracy values at the end of every training epoch.
         const secPerEpoch =
             (performance.now() - beginMs) / (1000 * (epoch + 1));
         const timeToGo = secPerEpoch * (params.epochs - epoch - 1);
         ui.status(`Training model... Approximately ${
             secPerEpoch.toFixed(4)} seconds per epoch. ${timeToGo.toFixed(4)} seconds remaining.`);
         trainLogs.push(logs);
-        tfvis.show.history(lossContainer, trainLogs, ['loss', 'val_loss'])
-        tfvis.show.history(accContainer, trainLogs, ['acc', 'val_acc'])
+        tfvis.show.history(lossContainer, trainLogs, ['loss', 'val_loss']);
+        tfvis.show.history(accContainer, trainLogs, ['acc', 'val_acc']);
         calculateAndDrawConfusionMatrix(model, xTest, yTest);
       },
     }
   });
+
   const secPerEpoch = (performance.now() - beginMs) / (1000 * params.epochs);
   ui.status(
       `Model training complete:  ${secPerEpoch.toFixed(4)} seconds per epoch`);
