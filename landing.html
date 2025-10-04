@@ -6,58 +6,53 @@
   <title>ExoLiX - Exoplanet Classification with AI</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="scss/style.scss" />
-  <style>
-    .hero-gradient {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-  </style>
+  <link rel="stylesheet" href="scss/dark-theme.scss" />
 </head>
-<body class="bg-gray-50">
+<body>
   <!-- Navigation -->
   <div id="nav-container"></div>
 
   <!-- Hero Section -->
-  <div class="hero-gradient text-white py-20 flex items-center justify-center">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-      <h1 class="text-5xl font-bold mb-4">ExoLiX</h1>
-      <p class="text-2xl mb-8">Hunting for Exoplanets with AI</p>
-      <p class="text-lg max-w-2xl mx-auto mb-8">
+  <div class="relative py-32 flex items-center justify-center overflow-hidden">
+    <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+      <h1 class="text-6xl md:text-7xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-300 via-purple-300 to-pink-300">
+        ExoLiX
+      </h1>
+      <p class="text-3xl md:text-4xl mb-8 text-blue-200 font-light">Hunting for Exoplanets with AI</p>
+      <p class="text-lg md:text-xl max-w-3xl mx-auto mb-10 text-gray-300 leading-relaxed">
         An intelligent system for classifying Kepler Objects of Interest (KOIs) using machine learning.
         Explore NASA's exoplanet data, select your training dataset, and build custom AI models.
       </p>
-      <div class="flex justify-center space-x-4">
-        <a href="multiTableExplorer.html" class="bg-white text-indigo-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition">
-          Get Started
+      <div class="flex justify-center space-x-4 flex-wrap gap-4">
+        <a href="multiTableExplorer.html" class="btn-primary px-8 py-4 rounded-lg font-semibold transition-all transform hover:scale-105">
+          🚀 Get Started
         </a>
-        <!-- <a href="training.html" class="bg-indigo-800 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-900 transition">
-          Train Model
-        </a> -->
       </div>
     </div>
   </div>
 
   <!-- Features Section -->
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-    <h2 class="text-3xl font-bold text-center mb-12">Features</h2>
+    <h2 class="text-4xl font-bold text-center mb-12 text-white">Features</h2>
     <div class="grid md:grid-cols-3 gap-8">
-      <div class="bg-white p-6 rounded-lg shadow-md">
-        <div class="text-indigo-600 text-4xl mb-4">📊</div>
-        <h3 class="text-xl font-semibold mb-2">Interactive Data Explorer</h3>
-        <p class="text-gray-600">
+      <div class="card p-8 rounded-xl">
+        <div class="text-5xl mb-4">📊</div>
+        <h3 class="text-xl font-semibold mb-3 text-white">Interactive Data Explorer</h3>
+        <p class="text-gray-300">
           Browse and analyze thousands of Kepler Objects of Interest with advanced filtering and sorting capabilities.
         </p>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow-md">
-        <div class="text-indigo-600 text-4xl mb-4">🎯</div>
-        <h3 class="text-xl font-semibold mb-2">Selective Training</h3>
-        <p class="text-gray-600">
+      <div class="card p-8 rounded-xl">
+        <div class="text-5xl mb-4">🎯</div>
+        <h3 class="text-xl font-semibold mb-3 text-white">Selective Training</h3>
+        <p class="text-gray-300">
           Choose specific data points for training your model. Select all or pick individual observations for custom datasets.
         </p>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow-md">
-        <div class="text-indigo-600 text-4xl mb-4">🤖</div>
-        <h3 class="text-xl font-semibold mb-2">AI Classification</h3>
-        <p class="text-gray-600">
+      <div class="card p-8 rounded-xl">
+        <div class="text-5xl mb-4">🤖</div>
+        <h3 class="text-xl font-semibold mb-3 text-white">AI Classification</h3>
+        <p class="text-gray-300">
           Train neural networks using TensorFlow.js to classify exoplanets as confirmed, candidates, or false positives.
         </p>
       </div>
@@ -65,23 +60,23 @@
   </div>
 
   <!-- About Section -->
-  <div class="bg-white py-16">
+  <div class="py-16">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-      <h2 class="text-3xl font-bold text-center mb-8">About ExoLiX</h2>
-      <div class="prose prose-lg max-w-none">
-        <p class="text-gray-700 mb-4">
+      <h2 class="text-4xl font-bold text-center mb-8 text-white">About ExoLiX</h2>
+      <div class="card p-8 rounded-xl space-y-6">
+        <p class="text-gray-300 leading-relaxed">
           ExoLiX is an AI-powered platform designed for the 2025 NASA Space Apps Challenge. 
           Our mission is to democratize exoplanet research by providing an accessible interface 
           for training and deploying machine learning models on NASA's open-source datasets.
         </p>
-        <p class="text-gray-700 mb-4">
+        <p class="text-gray-300 leading-relaxed">
           Built with TensorFlow.js, our system runs entirely in your browser, making it fast, 
           private, and accessible to researchers and enthusiasts alike. Whether you're a 
           seasoned astronomer or just curious about exoplanets, ExoLiX provides the tools 
           you need to explore and analyze data from NASA's Kepler, K2, and TESS missions.
         </p>
-        <h3 class="text-xl font-semibold mt-8 mb-4">Data Sources</h3>
-        <p class="text-gray-700">
+        <h3 class="text-2xl font-semibold mt-8 mb-4 text-blue-300">Data Sources</h3>
+        <p class="text-gray-300 leading-relaxed">
           Our platform utilizes the NASA Exoplanet Archive's cumulative dataset, containing 
           detailed observations of Kepler Objects of Interest including orbital periods, 
           transit durations, planetary radii, stellar characteristics, and disposition classifications.
@@ -92,23 +87,23 @@
 
   <!-- Team Section -->
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-    <h2 class="text-3xl font-bold text-center mb-8">Team ExoLiX</h2>
-    <div class="bg-white p-8 rounded-lg shadow-md text-center">
-      <p class="text-gray-600 mb-4">
+    <h2 class="text-4xl font-bold text-center mb-8 text-white">Team ExoLiX</h2>
+    <div class="card p-8 rounded-xl text-center">
+      <p class="text-gray-300 mb-4">
         [Team member information will be added here]
       </p>
-      <p class="text-gray-600">
+      <p class="text-gray-400">
         Built for the 2025 NASA Space Apps Challenge
       </p>
     </div>
   </div>
 
   <!-- Footer -->
-  <footer class="bg-gray-800 text-white py-8">
+  <footer class="border-t border-gray-800 py-8">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-      <p>&copy; 2025 ExoLiX Team. Data from NASA Exoplanet Archive.</p>
-      <p class="text-sm text-gray-400 mt-2">
-        <a href="https://exoplanetarchive.ipac.caltech.edu/" target="_blank" class="hover:text-white">
+      <p class="text-gray-400">&copy; 2025 ExoLiX Team. Data from NASA Exoplanet Archive.</p>
+      <p class="text-sm text-gray-500 mt-2">
+        <a href="https://exoplanetarchive.ipac.caltech.edu/" target="_blank" class="hover:text-blue-400 transition">
           NASA Exoplanet Archive
         </a>
       </p>
@@ -117,7 +112,9 @@
 
   <script type="module">
     import { loadNavigation } from './shared.js';
+    import { initStarfield } from './starfield.js';
     loadNavigation('landing');
+    initStarfield();
   </script>
 </body>
 </html>

@@ -98,8 +98,8 @@ function createColumnDefs(data, tableName) {
       sortable: true,
       filter: true,
       resizable: true,
-      headerClass: featureName ? 'feature-mapped-header' : '',
-      cellClass: featureName ? 'feature-mapped-cell' : ''
+      headerClass: featureName ? 'highlight-header' : '',
+      cellClass: featureName ? 'highlight-cell' : ''
     };
     
     columnDefs.push(colDef);
@@ -138,7 +138,7 @@ async function addTable(name, url, datasetId, csvText = null) {
     const tabNav = document.getElementById('tabNavigation');
     const tabButton = document.createElement('button');
     tabButton.id = `tab_${tableId}`;
-    tabButton.className = 'tab-button px-4 py-2 text-gray-600 hover:text-gray-900';
+    tabButton.className = 'px-4 py-2 text-gray-600 hover:text-gray-900 transition-all';
     tabButton.textContent = name;
     tabButton.dataset.tableId = tableId;
     tabButton.addEventListener('click', () => switchTable(tableId));
@@ -223,10 +223,10 @@ function switchTable(tableId) {
   state.activeTableId = tableId;
   
   // Update tab buttons
-  document.querySelectorAll('.tab-button').forEach(btn => {
-    btn.classList.remove('active');
+  document.querySelectorAll('#tabNavigation button').forEach(btn => {
+    btn.classList.remove('active-tab');
   });
-  document.getElementById(`tab_${tableId}`).classList.add('active');
+  document.getElementById(`tab_${tableId}`).classList.add('active-tab');
   
   // Update tab contents
   document.querySelectorAll('.tab-content').forEach(content => {

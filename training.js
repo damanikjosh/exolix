@@ -227,15 +227,17 @@ function displayDataInfo(loadResult) {
   
   if (!loadResult || !loadResult.success) {
     dataInfoEl.innerHTML = `
-      <p class="text-orange-600">No training data available.</p>
-      <p class="text-gray-600 mt-2">
-        Please complete these steps:<br>
-        1. Go to <a href="multiTableExplorer.html" class="text-indigo-600 hover:underline">Data Explorer</a> and select rows<br>
-        2. Click "Send to Training"<br>
-        3. Define features in <a href="featureMapping.html" class="text-indigo-600 hover:underline">Feature Mapping</a><br>
-        4. Return here to train
-      </p>
-      ${loadResult && loadResult.error ? `<p class="text-red-600 mt-2 text-sm">Error: ${loadResult.error}</p>` : ''}
+      <div class="empty-state">
+        <p>No training data available.</p>
+        <div class="empty-instructions">
+          Please complete these steps:<br>
+          1. Go to <a href="multiTableExplorer.html" class="link-primary">Data Explorer</a> and select rows<br>
+          2. Click "Send to Training"<br>
+          3. Define features in <a href="featureMapping.html" class="link-primary">Feature Mapping</a><br>
+          4. Return here to train
+        </div>
+        ${loadResult && loadResult.error ? `<div class="empty-error">Error: ${loadResult.error}</div>` : ''}
+      </div>
     `;
     document.getElementById('startTraining').disabled = true;
     document.getElementById('downloadData').disabled = true;
@@ -244,7 +246,7 @@ function displayDataInfo(loadResult) {
   
   if (!extractedFeatures || extractedFeatures.sampleCount === 0) {
     dataInfoEl.innerHTML = `
-      <p class="text-orange-600">No features extracted.</p>
+      <div class="empty-state">No features extracted.</div>
     `;
     document.getElementById('startTraining').disabled = true;
     document.getElementById('downloadData').disabled = true;
@@ -298,34 +300,34 @@ function displayDataInfo(loadResult) {
   if (extractedFeatures.labelEncoder) {
     const labels = extractedFeatures.labelEncoder.getAllLabels();
     labelMappingInfo = `
-      <div class="mb-4 bg-green-50 border border-green-200 rounded p-3">
-        <p class="text-green-800 font-semibold mb-2">✅ Label Encoding Active:</p>
-        <p class="text-gray-700 text-sm"><strong>Output Classes:</strong> ${extractedFeatures.outputDimension} (${labels.join(', ')})</p>
-        <p class="text-gray-600 text-xs mt-1">Raw values have been encoded to numerical labels for training</p>
+      <div class="label-encoding-badge">
+        <p class="badge-title">✅ Label Encoding Active:</p>
+        <p class="badge-content"><strong>Output Classes:</strong> ${extractedFeatures.outputDimension} (${labels.join(', ')})</p>
+        <p class="badge-note">Raw values have been encoded to numerical labels for training</p>
       </div>
     `;
   }
   
   dataInfoEl.innerHTML = `
-    <div class="mb-4">
-      <p class="text-gray-700 font-semibold mb-2">Dataset Summary:</p>
-      <p class="text-gray-700"><strong>Total Samples:</strong> ${extractedFeatures.sampleCount}</p>
-      <p class="text-gray-700"><strong>Input Dimensions:</strong> ${extractedFeatures.inputDimension}</p>
-      <p class="text-gray-700"><strong>Output Dimensions:</strong> ${extractedFeatures.outputDimension}</p>
+    <div class="data-summary">
+      <p class="section-title">Dataset Summary:</p>
+      <p class="section-content"><strong>Total Samples:</strong> ${extractedFeatures.sampleCount}</p>
+      <p class="section-content"><strong>Input Dimensions:</strong> ${extractedFeatures.inputDimension}</p>
+      <p class="section-content"><strong>Output Dimensions:</strong> ${extractedFeatures.outputDimension}</p>
     </div>
     
     ${labelMappingInfo}
     
-    <div class="mb-4">
-      <p class="text-gray-700 font-semibold mb-2">Feature Mapping:</p>
-      <ul class="list-disc list-inside ml-4 text-gray-600 text-sm">
+    <div class="data-summary">
+      <p class="section-title">Feature Mapping:</p>
+      <ul class="section-list" style="font-size: 0.875rem;">
         ${inputFeaturesInfo}
         <li><strong>Output Label:</strong> ${outputInfo}</li>
       </ul>
     </div>
     
-    <div>
-      <p class="text-gray-700 font-semibold mb-2">Label Distribution:</p>
+    <div class="data-summary">
+      <p class="section-title">Label Distribution:</p>
       <ul class="list-disc list-inside ml-4 text-gray-600">
         ${countsList}
       </ul>
@@ -386,7 +388,7 @@ async function trainModel(features, config, statusContainer) {
   console.log('🚀 Starting model training...');
   
   // Prepare tensors
-  statusContainer.innerHTML = '<p class="text-indigo-700 font-semibold">📊 Preparing training data...</p>';
+  statusContainer.innerHTML = '<p class="status-info">📊 Preparing training data...</p>';
   const { xData, yData, validCount } = prepareTensors(features);
   
   console.log(`Training with ${validCount} valid samples`);
@@ -398,7 +400,7 @@ async function trainModel(features, config, statusContainer) {
   console.log(`Train: ${xTrain.shape[0]} samples, Validation: ${xVal.shape[0]} samples`);
   
   // Build model
-  statusContainer.innerHTML = '<p class="text-indigo-700 font-semibold">🏗️ Building neural network...</p>';
+  statusContainer.innerHTML = '<p class="status-info">🏗️ Building neural network...</p>';
   
   const model = tf.sequential({
     layers: [
@@ -438,21 +440,21 @@ async function trainModel(features, config, statusContainer) {
   
   statusContainer.innerHTML = `
     <div id="training-status-message">
-      <p class="text-indigo-700 font-semibold mb-4">🎯 Training model...</p>
+      <p class="status-info" style="margin-bottom: 1rem;">🎯 Training model...</p>
     </div>
-    <div id="training-progress" class="space-y-4"></div>
-    <div class="grid grid-cols-2 gap-4 mt-4">
-      <div>
-        <h4 class="font-semibold text-gray-700 mb-2">Loss</h4>
+    <div id="training-progress" style="display: flex; flex-direction: column; gap: 1rem;"></div>
+    <div class="grid-cols-2" style="margin-top: 1rem;">
+      <div class="chart-container">
+        <h4 class="chart-title">Loss</h4>
         <div id="lossCanvas"></div>
       </div>
-      <div>
-        <h4 class="font-semibold text-gray-700 mb-2">Accuracy</h4>
+      <div class="chart-container">
+        <h4 class="chart-title">Accuracy</h4>
         <div id="accuracyCanvas"></div>
       </div>
     </div>
-    <div class="mt-4">
-      <h4 class="font-semibold text-gray-700 mb-2">Confusion Matrix (Validation Set)</h4>
+    <div style="margin-top: 1rem;">
+      <h4 class="chart-title" style="margin-bottom: 0.5rem;">Confusion Matrix (Validation Set)</h4>
       <div id="confusion-matrix"></div>
     </div>
   `;
@@ -473,31 +475,31 @@ async function trainModel(features, config, statusContainer) {
         if (progressDiv) {
           const progress = ((epoch + 1) / config.epochs * 100).toFixed(1);
           progressDiv.innerHTML = `
-            <div>
-              <div class="flex justify-between text-sm mb-2">
-                <span class="font-medium">Epoch ${epoch + 1}/${config.epochs}</span>
-                <span class="text-gray-600">${progress}% - ${timeToGo.toFixed(1)}s remaining</span>
+            <div class="progress-container">
+              <div class="progress-header">
+                <span class="progress-label">Epoch ${epoch + 1}/${config.epochs}</span>
+                <span class="progress-info">${progress}% - ${timeToGo.toFixed(1)}s remaining</span>
               </div>
-              <div class="w-full bg-gray-200 rounded-full h-3">
-                <div class="bg-indigo-600 h-3 rounded-full transition-all" style="width: ${progress}%"></div>
+              <div class="progress-bar-track">
+                <div class="progress-bar-fill" style="width: ${progress}%"></div>
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-4 text-sm mt-3">
-              <div class="bg-blue-50 p-3 rounded">
-                <p class="text-gray-600">Training Loss</p>
-                <p class="text-xl font-semibold text-blue-700">${logs.loss.toFixed(4)}</p>
+            <div class="grid-cols-4" style="font-size: 0.875rem; margin-top: 0.75rem;">
+              <div class="metric-card card-blue">
+                <p class="metric-label">Training Loss</p>
+                <p class="metric-value">${logs.loss.toFixed(4)}</p>
               </div>
-              <div class="bg-green-50 p-3 rounded">
-                <p class="text-gray-600">Training Accuracy</p>
-                <p class="text-xl font-semibold text-green-700">${(logs.acc * 100).toFixed(2)}%</p>
+              <div class="metric-card card-green">
+                <p class="metric-label">Training Accuracy</p>
+                <p class="metric-value">${(logs.acc * 100).toFixed(2)}%</p>
               </div>
-              <div class="bg-orange-50 p-3 rounded">
-                <p class="text-gray-600">Validation Loss</p>
-                <p class="text-xl font-semibold text-orange-700">${logs.val_loss.toFixed(4)}</p>
+              <div class="metric-card card-orange">
+                <p class="metric-label">Validation Loss</p>
+                <p class="metric-value">${logs.val_loss.toFixed(4)}</p>
               </div>
-              <div class="bg-purple-50 p-3 rounded">
-                <p class="text-gray-600">Validation Accuracy</p>
-                <p class="text-xl font-semibold text-purple-700">${(logs.val_acc * 100).toFixed(2)}%</p>
+              <div class="metric-card card-purple">
+                <p class="metric-label">Validation Accuracy</p>
+                <p class="metric-value">${(logs.val_acc * 100).toFixed(2)}%</p>
               </div>
             </div>
           `;
@@ -606,7 +608,7 @@ document.getElementById('startTraining').addEventListener('click', async () => {
   
   // Show initial status
   statusContent.innerHTML = `
-    <p class="text-indigo-700 font-semibold">🚀 Preparing training data...</p>
+    <p class="status-info">🚀 Preparing training data...</p>
   `;
   
   try {
@@ -617,10 +619,10 @@ document.getElementById('startTraining').addEventListener('click', async () => {
     const statusMessage = document.getElementById('training-status-message');
     if (statusMessage) {
       statusMessage.innerHTML = `
-        <div class="bg-green-50 border border-green-200 rounded p-4 mb-4">
-          <p class="text-green-800 font-semibold">✅ Training Complete!</p>
-          <p class="text-green-700 mt-2">Model has been trained successfully.</p>
-          <div class="mt-3 flex gap-2">
+        <div class="status-success">
+          <p class="status-title">✅ Training Complete!</p>
+          <p class="status-message">Model has been trained successfully.</p>
+          <div class="action-buttons">
             <button onclick="saveModelLocally()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
               💾 Save Model Locally
             </button>
@@ -634,9 +636,9 @@ document.getElementById('startTraining').addEventListener('click', async () => {
     const statusMessage = document.getElementById('training-status-message');
     if (statusMessage) {
       statusMessage.innerHTML = `
-        <div class="bg-red-50 border border-red-200 rounded p-4 mb-4">
-          <p class="text-red-800 font-semibold">❌ Training Failed</p>
-          <p class="text-red-700 mt-2">${error.message}</p>
+        <div class="status-error">
+          <p class="status-title">❌ Training Failed</p>
+          <p class="status-message">${error.message}</p>
         </div>
       `;
     }

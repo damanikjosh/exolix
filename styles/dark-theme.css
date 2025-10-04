@@ -1,0 +1,288 @@
+/* 
+ * DEPRECATED: This file is deprecated.
+ * Please use scss/dark-theme.scss instead.
+ * This file is kept for backwards compatibility only.
+ */
+
+/* Dark Theme Styles for ExoLiX */
+:root {
+  --bg-1: #0a0f1f;
+  --bg-2: #030711;
+  --text: #e6e9f2;
+  --muted: #a7b0c3;
+  --accent: #7aa2ff;
+  --accent-2: #9d7aff;
+  --btn-shadow: 0 10px 25px rgba(122, 162, 255, 0.35);
+  --card: rgba(255, 255, 255, 0.02);
+  --card-border: rgba(255, 255, 255, 0.06);
+  --indigo-600: #7aa2ff;
+  --indigo-700: #6b8cff;
+  --gray-50: rgba(255, 255, 255, 0.03);
+  --gray-100: rgba(255, 255, 255, 0.05);
+  --gray-200: rgba(255, 255, 255, 0.08);
+  --gray-300: rgba(255, 255, 255, 0.12);
+  --gray-600: var(--muted);
+  --gray-700: var(--text);
+  --gray-900: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg-2);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Canvas starfield background */
+#space {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  display: block;
+}
+
+/* Navigation bar */
+nav {
+  background: rgba(10, 12, 22, 0.35);
+  backdrop-filter: blur(8px) saturate(120%);
+  border-bottom: 1px solid var(--card-border);
+}
+
+nav a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+nav a:hover {
+  color: var(--accent);
+}
+
+nav .text-indigo-600 {
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+nav .text-gray-900.font-medium {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Cards and panels */
+.bg-white {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+}
+
+.shadow, .shadow-sm, .shadow-lg {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.rounded-lg {
+  border-radius: 16px;
+}
+
+.rounded {
+  border-radius: 12px;
+}
+
+/* Buttons */
+.bg-indigo-600, button.bg-indigo-600, a.bg-indigo-600 {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: white;
+  border: 0;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.bg-indigo-600:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--btn-shadow);
+}
+
+.bg-green-600 {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.bg-red-600 {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+}
+
+button:disabled, .disabled\:bg-gray-300:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Text colors */
+.text-gray-600 {
+  color: var(--muted);
+}
+
+.text-gray-700, .text-gray-900 {
+  color: var(--text);
+}
+
+.text-indigo-600 {
+  color: var(--accent);
+}
+
+.text-blue-600 {
+  color: var(--accent);
+}
+
+.text-green-600 {
+  color: #10b981;
+}
+
+.text-red-600 {
+  color: #ef4444;
+}
+
+.text-orange-600 {
+  color: #f59e0b;
+}
+
+/* Backgrounds */
+.bg-gray-50 {
+  background: var(--bg-2);
+}
+
+.bg-blue-50 {
+  background: rgba(122, 162, 255, 0.08);
+  border-left: 4px solid var(--accent);
+}
+
+.bg-green-50 {
+  background: rgba(16, 185, 129, 0.08);
+  border-left: 4px solid #10b981;
+}
+
+.bg-red-50 {
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 4px solid #ef4444;
+}
+
+.bg-orange-50 {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.bg-purple-50 {
+  background: rgba(157, 122, 255, 0.08);
+}
+
+.bg-indigo-50 {
+  background: rgba(122, 162, 255, 0.08);
+}
+
+/* Borders */
+.border-gray-300, .border-gray-200 {
+  border-color: var(--card-border);
+}
+
+.border-indigo-600 {
+  border-color: var(--accent);
+}
+
+.border-blue-500 {
+  border-color: var(--accent);
+}
+
+.border-green-200 {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.border-red-200 {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Inputs */
+input, select, textarea {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(122, 162, 255, 0.2);
+}
+
+input::placeholder {
+  color: var(--muted);
+}
+
+/* Modal */
+.bg-black {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+/* Gradient backgrounds for hero */
+.hero-gradient {
+  background: radial-gradient(1200px 800px at 70% 10%, var(--bg-1), var(--bg-2));
+}
+
+/* AG Grid dark theme overrides */
+.ag-theme-alpine {
+  --ag-background-color: rgba(255, 255, 255, 0.02);
+  --ag-foreground-color: var(--text);
+  --ag-border-color: var(--card-border);
+  --ag-header-background-color: rgba(10, 10, 20, 0.7);
+  --ag-odd-row-background-color: rgba(255, 255, 255, 0.01);
+  --ag-row-hover-color: rgba(255, 255, 255, 0.04);
+  --ag-selected-row-background-color: rgba(122, 162, 255, 0.15);
+}
+
+/* Hover effects */
+.hover\:bg-gray-50:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.hover\:bg-gray-100:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hover\:bg-indigo-50:hover {
+  background: rgba(122, 162, 255, 0.12);
+}
+
+.hover\:bg-red-50:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

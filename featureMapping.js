@@ -123,7 +123,7 @@ function populateAvailableColumns() {
     } else {
       availableColumns.forEach(column => {
         const chip = document.createElement('div');
-        chip.className = 'column-chip px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-full border border-gray-300 hover:bg-gray-200 cursor-grab';
+        chip.className = 'draggable bg-semi-light bg-blur px-3 py-1 text-gray-300 text-sm rounded-full border border-gray-700 hover:bg-gray-600';
         chip.textContent = column;
         chip.draggable = true;
         chip.dataset.tableIndex = tableIndex;
@@ -155,15 +155,15 @@ function addInputFeature() {
   
   const container = document.getElementById('inputFeatures');
   const featureBox = document.createElement('div');
-  featureBox.className = 'feature-box drop-zone p-4 rounded';
+  featureBox.className = 'drop-zone border-dashed-gray bg-semi-dark bg-blur-sm p-4 rounded';
   featureBox.dataset.featureType = 'input';
   featureBox.dataset.featureId = featureId;
   
   const totalTables = state.tables.length;
   featureBox.innerHTML = `
     <div class="flex items-center justify-between mb-2">
-      <div class="text-sm font-medium text-gray-700">Input Feature ${state.featureCounter}</div>
-      <button class="remove-feature text-red-600 text-xs hover:text-red-800" data-feature-id="${featureId}">Remove</button>
+      <div class="text-sm font-medium text-gray-300">Input Feature ${state.featureCounter}</div>
+      <button class="remove-feature label-remove-btn" data-feature-id="${featureId}">×</button>
     </div>
     <div class="drop-zone-content text-gray-400 text-sm">
       Drop one column from each table (need ${totalTables} columns total, one per table)
@@ -422,7 +422,7 @@ function renderFeatureContent(featureId) {
   const totalTables = state.tables.length;
   
   if (feature.mappedColumns.length === 0) {
-    contentDiv.innerHTML = `<span class="text-gray-400 text-sm">Drop one column from each table (0/${totalTables})</span>`;
+    contentDiv.innerHTML = `<span class="drop-zone-empty">Drop one column from each table (0/${totalTables})</span>`;
     featureBox.classList.remove('filled');
   } else {
     // Sort by table order
@@ -430,15 +430,17 @@ function renderFeatureContent(featureId) {
     
     // Check if complete
     const isComplete = feature.mappedColumns.length === totalTables;
-    const statusClass = isComplete ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700';
-    const statusText = isComplete ? '✓ Complete' : `${feature.mappedColumns.length}/${totalTables} columns`;
     
-    let html = `<div class="${statusClass} text-xs px-2 py-1 rounded mb-2 inline-block">${statusText}</div><br>`;
+    let html = '';
+    // Only show warning if incomplete
+    if (!isComplete) {
+      html = `<div class="bg-yellow-50 text-yellow-700 text-xs px-2 py-1 rounded mb-2 inline-block">⚠ ${feature.mappedColumns.length}/${totalTables} columns</div><br>`;
+    }
     html += sortedColumns.map(col => `
-      <div class="inline-flex items-center bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded mr-2 mb-2">
+      <div class="value-chip">
         <span class="font-medium">${col.tableName}:</span>
         <span class="ml-1">${col.columnName}</span>
-        <button class="ml-2 text-indigo-600 hover:text-indigo-900" 
+        <button class="remove-value-btn" 
                 onclick="removeColumnFromFeature('${featureId}', ${col.tableIndex}, '${col.columnName}')">×</button>
       </div>
     `).join('');
@@ -458,7 +460,7 @@ function renderOutputFeature() {
   const totalTables = state.tables.length;
   
   if (!state.outputFeature || !state.outputFeature.columns || state.outputFeature.columns.length === 0) {
-    contentDiv.innerHTML = `<span class="text-gray-400 text-sm">Drop one column from each table (0/${totalTables})</span>`;
+    contentDiv.innerHTML = `<span class="drop-zone-empty">Drop one column from each table (0/${totalTables})</span>`;
     featureBox.classList.remove('filled');
   } else {
     // Sort by table order
@@ -466,15 +468,17 @@ function renderOutputFeature() {
     
     // Check if complete
     const isComplete = state.outputFeature.columns.length === totalTables;
-    const statusClass = isComplete ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700';
-    const statusText = isComplete ? '✓ Complete' : `${state.outputFeature.columns.length}/${totalTables} columns`;
     
-    let html = `<div class="${statusClass} text-xs px-2 py-1 rounded mb-2 inline-block">${statusText}</div><br>`;
+    let html = '';
+    // Only show warning if incomplete
+    if (!isComplete) {
+      html = `<div class="bg-yellow-50 text-yellow-700 text-xs px-2 py-1 rounded mb-2 inline-block">⚠ ${state.outputFeature.columns.length}/${totalTables} columns</div><br>`;
+    }
     html += sortedColumns.map(col => `
-      <div class="inline-flex items-center bg-green-100 text-green-800 text-xs px-2 py-1 rounded mr-2 mb-2">
+      <div class="value-chip">
         <span class="font-medium">${col.tableName}:</span>
         <span class="ml-1">${col.columnName}</span>
-        <button class="ml-2 text-green-600 hover:text-green-900" 
+        <button class="remove-value-btn" 
                 onclick="removeOutputColumn(${col.tableIndex}, '${col.columnName}')">×</button>
       </div>
     `).join('');
@@ -801,13 +805,13 @@ function renderAvailableValues() {
   const unmappedValues = state.labelMapping.uniqueValues.filter(v => !mappedValues.has(v));
   
   if (unmappedValues.length === 0) {
-    container.innerHTML = '<p class="text-sm text-gray-500">All values are mapped</p>';
+    container.innerHTML = '<p class="helper-text">All values are mapped</p>';
     return;
   }
   
   unmappedValues.forEach(value => {
     const chip = document.createElement('div');
-    chip.className = 'value-chip px-3 py-2 bg-gray-100 text-gray-800 text-sm rounded border border-gray-300 hover:bg-gray-200 cursor-grab';
+    chip.className = 'draggable bg-semi-light bg-blur px-3 py-2 text-gray-300 text-sm rounded border border-gray-700 hover:bg-gray-600';
     chip.textContent = value;
     chip.draggable = true;
     chip.dataset.value = value;
@@ -843,29 +847,41 @@ function renderTargetLabels() {
   
   state.labelMapping.targetLabels.forEach(label => {
     const labelBox = document.createElement('div');
-    labelBox.className = 'label-box border-2 border-dashed border-gray-300 rounded p-3 bg-gray-50';
+    labelBox.className = 'label-box';
     labelBox.dataset.labelId = label.id;
     
     // Label header
     const header = document.createElement('div');
     header.className = 'flex items-center justify-between mb-2';
     
+    // Container for input with icon
+    const nameContainer = document.createElement('div');
+    nameContainer.className = 'label-name-container';
+    
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.value = label.name;
-    nameInput.className = 'text-sm font-medium border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1';
+    nameInput.className = 'label-name-input';
+    nameInput.placeholder = 'Enter label name...';
     nameInput.addEventListener('change', (e) => {
       label.name = e.target.value;
       updateMappingSummary();
       autoSaveFeatureMapping(); // Auto-save changes
     });
     
+    const editIcon = document.createElement('span');
+    editIcon.className = 'label-edit-icon';
+    editIcon.innerHTML = '✏️';
+    
+    nameContainer.appendChild(nameInput);
+    nameContainer.appendChild(editIcon);
+    
     const removeBtn = document.createElement('button');
     removeBtn.textContent = '×';
-    removeBtn.className = 'text-red-600 hover:text-red-800 text-xl font-bold';
+    removeBtn.className = 'label-remove-btn';
     removeBtn.addEventListener('click', () => removeTargetLabel(label.id));
     
-    header.appendChild(nameInput);
+    header.appendChild(nameContainer);
     header.appendChild(removeBtn);
     labelBox.appendChild(header);
     
@@ -875,11 +891,14 @@ function renderTargetLabels() {
     valuesContainer.dataset.labelId = label.id;
     
     if (label.mappedValues.length === 0) {
-      valuesContainer.innerHTML = '<p class="text-xs text-gray-400">Drop values here</p>';
+      valuesContainer.innerHTML = '<p class="helper-text-sm">Drop values here</p>';
+      labelBox.classList.remove('filled');
     } else {
+      labelBox.classList.add('filled');
+      
       label.mappedValues.forEach(value => {
         const valueChip = document.createElement('div');
-        valueChip.className = 'inline-flex items-center bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded mr-1 mb-1 cursor-grab';
+        valueChip.className = 'value-chip';
         valueChip.draggable = true;
         valueChip.dataset.value = value;
         valueChip.dataset.sourceLabelId = label.id;
@@ -900,7 +919,7 @@ function renderTargetLabels() {
         valueText.textContent = value;
         
         const removeBtn = document.createElement('button');
-        removeBtn.className = 'ml-2 text-indigo-600 hover:text-indigo-900 font-bold';
+        removeBtn.className = 'remove-value-btn';
         removeBtn.textContent = '×';
         removeBtn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -917,16 +936,16 @@ function renderTargetLabels() {
     valuesContainer.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      labelBox.classList.add('border-indigo-500', 'bg-indigo-50');
+      labelBox.classList.add('drag-over');
     });
     
     valuesContainer.addEventListener('dragleave', () => {
-      labelBox.classList.remove('border-indigo-500', 'bg-indigo-50');
+      labelBox.classList.remove('drag-over');
     });
     
     valuesContainer.addEventListener('drop', (e) => {
       e.preventDefault();
-      labelBox.classList.remove('border-indigo-500', 'bg-indigo-50');
+      labelBox.classList.remove('drag-over');
       
       const value = e.dataTransfer.getData('text/plain');
       const sourceLabelId = e.dataTransfer.getData('sourceLabelId');
@@ -1073,15 +1092,15 @@ async function loadSavedMapping() {
           
           const container = document.getElementById('inputFeatures');
           const featureBox = document.createElement('div');
-          featureBox.className = 'feature-box drop-zone p-4 rounded';
+          featureBox.className = 'drop-zone border-dashed-gray bg-semi-dark bg-blur-sm p-4 rounded';
           featureBox.dataset.featureType = 'input';
           featureBox.dataset.featureId = featureId;
           
           const totalTables = state.tables.length;
           featureBox.innerHTML = `
             <div class="flex items-center justify-between mb-2">
-              <div class="text-sm font-medium text-gray-700">Input Feature ${state.featureCounter}</div>
-              <button class="remove-feature text-red-600 text-xs hover:text-red-800" data-feature-id="${featureId}">Remove</button>
+              <div class="text-sm font-medium text-gray-300">Input Feature ${state.featureCounter}</div>
+              <button class="remove-feature label-remove-btn" data-feature-id="${featureId}">×</button>
             </div>
             <div class="drop-zone-content text-gray-400 text-sm">
               Drop one column from each table (need ${totalTables} columns total, one per table)

@@ -114,6 +114,12 @@ a {
   line-height: 1.2em;
 }
 
+// Override for navigation links
+nav a {
+  border-bottom: none;
+  display: inline;
+}
+
 button {
  @extend .mdc-button--raised;
  padding: 8px 12px 8px 12px;
