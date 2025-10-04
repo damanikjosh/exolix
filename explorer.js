@@ -52,16 +52,23 @@ function getFeatureForColumn(tableName, columnName) {
   return null;
 }
 
+// Helper to get base URL for assets (handles GitHub Pages subdirectory)
+function getAssetUrl(path) {
+  // Get the base path from the current location
+  const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+  return `${window.location.origin}${basePath}/${path}`;
+}
+
 // Presets for common datasets
 const PRESETS = {
   kepler: {
     name: 'Kepler Object of Interest 2025',
-    url: 'data/cumulative_2025.09.29_21.37.15.csv',
+    get url() { return getAssetUrl('data/cumulative_2025.09.29_21.37.15.csv'); },
     datasetId: 'koi_2025'
   },
   tess: {
     name: 'TESS Object of Interest 2025',
-    url: 'data/TOI_2025.10.01_18.37.10.csv',
+    get url() { return getAssetUrl('data/TOI_2025.10.01_18.37.10.csv'); },
     datasetId: 'toi_2025'
   }
 };
