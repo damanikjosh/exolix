@@ -14,7 +14,7 @@
     "csv-parse": "^6.1.0"
   },
   "scripts": {
-    "build": "cross-env NODE_ENV=production parcel build --no-scope-hoist index.html --public-url ./",
+    "build": "cross-env NODE_ENV=production parcel build --no-scope-hoist index.html landing.html multiTableExplorer.html featureMapping.html training.html --public-url ./",
     "watch": "./serve.sh",
     "link-local": "yalc link"
   },

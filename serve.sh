@@ -35,7 +35,7 @@ node_modules/http-server/bin/http-server dist --cors -p "${RESOURCE_PORT}" > /de
 
 echo Starting the example html/js server...
 # This uses port 1234 by default.
-parcel index.html --dist-dir dist --no-hmr --public-url / -p 1236
+parcel index.html landing.html multiTableExplorer.html featureMapping.html training.html --dist-dir dist --no-hmr --public-url / -p 1236
 
 # When the Parcel server exits, kill the http-server too.
 kill $HTTP_SERVER_PID
