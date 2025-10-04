@@ -59,6 +59,7 @@ async function trainModel(xTrain, yTrain, xTest, yTest) {
   model.summary();
 
   const optimizer = tf.train.adam(params.learningRate);
+  
   model.compile({
     optimizer: optimizer,
     loss: 'categoricalCrossentropy',
@@ -69,6 +70,9 @@ async function trainModel(xTrain, yTrain, xTest, yTest) {
   const lossContainer = document.getElementById('lossCanvas');
   const accContainer = document.getElementById('accuracyCanvas');
   const beginMs = performance.now();
+
+  // Warm up the model by running a single predict call.
+  tf.tidy(() => model.predict(xTrain.slice([0, 0], [1, xTrain.shape[1]])));
 
   // Call `model.fit` to train the model with batching.
   const history = await model.fit(xTrain, yTrain, {
@@ -155,19 +159,19 @@ async function calculateAndDrawConfusionMatrix(model, xTest, yTest) {
  *   [numTestExamples, 3].
  */
 async function evaluateModelOnTestData(model, xTest, yTest) {
-  ui.clearEvaluateTable();
+  // ui.clearEvaluateTable();
 
-  tf.tidy(() => {
-    const xData = xTest.dataSync();
-    const yTrue = yTest.argMax(-1).dataSync();
-    const predictOut = model.predict(xTest);
-    const yPred = predictOut.argMax(-1);
-    ui.renderEvaluateTable(
-        xData, yTrue, yPred.dataSync(), predictOut.dataSync());
-    calculateAndDrawConfusionMatrix(model, xTest, yTest);
-  });
+  // tf.tidy(() => {
+  //   const xData = xTest.dataSync();
+  //   const yTrue = yTest.argMax(-1).dataSync();
+  //   const predictOut = model.predict(xTest);
+  //   const yPred = predictOut.argMax(-1);
+  //   ui.renderEvaluateTable(
+  //       xData, yTrue, yPred.dataSync(), predictOut.dataSync());
+  //   calculateAndDrawConfusionMatrix(model, xTest, yTest);
+  // });
 
-  predictOnManualInput(model);
+  // predictOnManualInput(model);
 }
 
 const HOSTED_MODEL_JSON_URL =
@@ -217,6 +221,7 @@ async function iris() {
   const localLoadButton = document.getElementById('load-local');
   const localSaveButton = document.getElementById('save-local');
   const localRemoveButton = document.getElementById('remove-local');
+  const trainButton = document.getElementById('train-submit');
 
   document.getElementById('train-form')
       .addEventListener('submit', async (event) => {
@@ -226,6 +231,8 @@ async function iris() {
           alert('Please upload and parse a CSV file first.');
           return;
         }
+
+        trainButton.disabled = true;
         // Log all form data
         const formData = new FormData(event.target);
         // for (const [key, value] of formData.entries()) {
@@ -256,17 +263,20 @@ async function iris() {
         console.log('Parsed data:', parsedData);
 
         const [xTrain, yTrain, xTest, yTest] = data.splitData(parsedData, 0.15);
+        
+        
 
         model = await trainModel(xTrain, yTrain, xTest, yTest);
-        await evaluateModelOnTestData(model, xTest, yTest);
-        // localSaveButton.disabled = false;
+        // await evaluateModelOnTestData(model, xTest, yTest);
+        localSaveButton.disabled = false;
+        trainButton.disabled = false;
       });
 
   if (await loader.urlExists(HOSTED_MODEL_JSON_URL)) {
     ui.status('Model available: ' + HOSTED_MODEL_JSON_URL);
     const button = document.getElementById('load-pretrained-remote');
     button.addEventListener('click', async () => {
-      ui.clearEvaluateTable();
+      // ui.clearEvaluateTable();
       model = await loader.loadHostedPretrainedModel(HOSTED_MODEL_JSON_URL);
       await predictOnManualInput(model);
       localSaveButton.disabled = false;

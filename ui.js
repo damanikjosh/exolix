@@ -15,16 +15,16 @@
  * =============================================================================
  */
 
-import {IRIS_CLASSES, IRIS_NUM_CLASSES} from './data';
+import {CLASSES} from './data';
 
 /**
  * Clear the evaluation table.
  */
 export function clearEvaluateTable() {
-  const tableBody = document.getElementById('evaluate-tbody');
-  while (tableBody.children.length > 1) {
-    tableBody.removeChild(tableBody.children[1]);
-  }
+  // const tableBody = document.getElementById('evaluate-tbody');
+  // while (tableBody.children.length > 1) {
+  //   tableBody.removeChild(tableBody.children[1]);
+  // }
 }
 
 /**
@@ -127,16 +127,16 @@ export function renderEvaluateTable(xData, yTrue, yPred, logits) {
       row.appendChild(cell);
     }
     const truthCell = document.createElement('td');
-    truthCell.textContent = IRIS_CLASSES[yTrue[i]];
+    truthCell.textContent = CLASSES[yTrue[i]];
     row.appendChild(truthCell);
     const predCell = document.createElement('td');
-    predCell.textContent = IRIS_CLASSES[yPred[i]];
+    predCell.textContent = CLASSES[yPred[i]];
     predCell.classList =
         yPred[i] === yTrue[i] ? ['correct-prediction'] : ['wrong-prediction'];
     row.appendChild(predCell);
     const logitsCell = document.createElement('td');
     const exampleLogits =
-        logits.slice(i * IRIS_NUM_CLASSES, (i + 1) * IRIS_NUM_CLASSES);
+        logits.slice(i * CLASSES.length, (i + 1) * CLASSES.length);
     logitsToSpans(exampleLogits).map(logitSpan => {
       logitsCell.appendChild(logitSpan);
     });
