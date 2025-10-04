@@ -47,7 +47,14 @@ async function trainModel(xTrain, yTrain, xTest, yTest) {
   // Define the topology of the model: two dense layers.
   const model = tf.sequential();
   model.add(tf.layers.dense(
-      {units: 10, activation: 'sigmoid', inputShape: [xTrain.shape[1]]}));
+      {units: 1024, activation: 'sigmoid', inputShape: [xTrain.shape[1]]}));
+  // batchnorm
+  model.add(tf.layers.batchNormalization());
+  // dropout
+  model.add(tf.layers.dropout({rate: 0.2}));
+  model.add(tf.layers.dense({units: 64, activation: 'relu'}));
+  model.add(tf.layers.dense({units: 8, activation: 'relu'}));
+
   model.add(tf.layers.dense({units: data.CLASSES.length, activation: 'softmax'}));
   model.summary();
 
