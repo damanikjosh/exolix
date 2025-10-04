@@ -1,319 +1,246 @@
-/**
- * @license
- * Copyright 2018 Google LLC. All Rights Reserved.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- * =============================================================================
- */
+import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 
-import * as tf from '@tensorflow/tfjs';
-import '@tensorflow/tfjs-backend-webgl';
-import * as tfvis from '@tensorflow/tfjs-vis';
+// Register all Community features
+ModuleRegistry.registerModules([AllCommunityModule]);
 
-import * as data from './data';
-import * as loader from './loader';
-import * as ui from './ui';
+import { createGrid } from 'ag-grid-community';
 
-let model;
+// --- Storage Helpers -------------------------------------------------------
+// Keys under which grid data and column defs are stored in localStorage
+const STORAGE_KEY = 'exoplanetTrainGridData';
+const COLS_KEY = 'exoplanetTrainGridCols';
 
-/**
- * Train a `tf.Model` to recognize Iris flower type.
- *
- * @param xTrain Training feature data, a `tf.Tensor` of shape
- *   [numTrainExamples, 4]. The second dimension include the features
- *   petal length, petalwidth, sepal length and sepal width.
- * @param yTrain One-hot training labels, a `tf.Tensor` of shape
- *   [numTrainExamples, 3].
- * @param xTest Test feature data, a `tf.Tensor` of shape [numTestExamples, 4].
- * @param yTest One-hot test labels, a `tf.Tensor` of shape
- *   [numTestExamples, 3].
- * @returns The trained `tf.Model` instance.
- */
-async function trainModel(xTrain, yTrain, xTest, yTest) {
-  ui.status('Training model... Please wait.');
-
-  const params = ui.loadTrainParametersFromUI();
-  const batchSize = params.batchSize || 32; // Default batch size is 32 if not provided
-
-  // Define the topology of the model: two dense layers.
-  const model = tf.sequential();
-  model.add(tf.layers.dense(
-      {units: 1024, activation: 'sigmoid', inputShape: [xTrain.shape[1]]}));
-  // batchnorm
-  model.add(tf.layers.batchNormalization());
-  // dropout
-  model.add(tf.layers.dropout({rate: 0.2}));
-  model.add(tf.layers.dense({units: 64, activation: 'relu'}));
-  model.add(tf.layers.dense({units: 8, activation: 'relu'}));
-
-  model.add(tf.layers.dense({units: data.CLASSES.length, activation: 'softmax'}));
-  model.summary();
-
-  const optimizer = tf.train.adam(params.learningRate);
-  
-  model.compile({
-    optimizer: optimizer,
-    loss: 'categoricalCrossentropy',
-    metrics: ['accuracy'],
-  });
-
-  const trainLogs = [];
-  const lossContainer = document.getElementById('lossCanvas');
-  const accContainer = document.getElementById('accuracyCanvas');
-  const beginMs = performance.now();
-
-  // Warm up the model by running a single predict call.
-  tf.tidy(() => model.predict(xTrain.slice([0, 0], [1, xTrain.shape[1]])));
-
-  // Call `model.fit` to train the model with batching.
-  const history = await model.fit(xTrain, yTrain, {
-    epochs: params.epochs,
-    batchSize: batchSize, // Add batching here
-    validationData: [xTest, yTest],
-    callbacks: {
-      onEpochEnd: async (epoch, logs) => {
-        const secPerEpoch =
-            (performance.now() - beginMs) / (1000 * (epoch + 1));
-        const timeToGo = secPerEpoch * (params.epochs - epoch - 1);
-        ui.status(`Training model... Approximately ${
-            secPerEpoch.toFixed(4)} seconds per epoch. ${timeToGo.toFixed(4)} seconds remaining.`);
-        trainLogs.push(logs);
-        tfvis.show.history(lossContainer, trainLogs, ['loss', 'val_loss']);
-        tfvis.show.history(accContainer, trainLogs, ['acc', 'val_acc']);
-        calculateAndDrawConfusionMatrix(model, xTest, yTest);
-      },
-    }
-  });
-
-  const secPerEpoch = (performance.now() - beginMs) / (1000 * params.epochs);
-  ui.status(
-      `Model training complete:  ${secPerEpoch.toFixed(4)} seconds per epoch`);
-  return model;
+// Attempt to load an array of row objects from localStorage; returns null if absent/invalid.
+function loadStoredData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed;
+  } catch (e) {
+    console.warn('Failed to parse stored grid data, ignoring.', e);
+    return null;
+  }
 }
 
-/**
- * Run inference on manually-input Iris flower data.
- *
- * @param model The instance of `tf.Model` to run the inference with.
- */
-async function predictOnManualInput(model) {
-  if (model == null) {
-    ui.setManualInputWinnerMessage('ERROR: Please load or train model first.');
-    return;
+// Serialize and store the provided array of row objects; logs a warning if it fails.
+function saveStoredData(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save grid data to localStorage.', e);
+  }
+}
+
+// Returns existing stored row data, or seeds storage with defaults
+function seedAndLoad(defaultRows) {
+  const existing = loadStoredData();
+  if (existing) return existing;
+  saveStoredData(defaultRows);
+  return defaultRows;
+}
+// Load/storing column definitions
+function loadStoredCols() {
+  try {
+    const raw = localStorage.getItem(COLS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed;
+  } catch (e) {
+    console.warn('Failed to parse stored column defs, ignoring.', e);
+    return null;
+  }
+}
+function saveStoredCols(cols) {
+  try {
+    localStorage.setItem(COLS_KEY, JSON.stringify(cols));
+  } catch (e) {
+    console.warn('Failed to save column defs to localStorage.', e);
+  }
+}
+// ---------------------------------------------------------------------------
+
+function main() {
+  // Define and load rowData and columnDefs
+  const defaultRowData = [
+    { make: "Tesla", model: "Model Y", price: 64950, electric: true },
+    { make: "Ford", model: "F-Series", price: 33850, electric: false },
+    { make: "Toyota", model: "Corolla", price: 29600, electric: false }
+  ];
+  const rowData = seedAndLoad(defaultRowData);
+  const defaultColDefs = [
+    { headerName: '', checkboxSelection: true, editable: false, headerCheckboxSelection: true, width: 40, pinned: 'left', sortable: false, filter: false, resizable: false },
+    { field: "make", headerName: "make", editable: true },
+    { field: "model", headerName: "model", editable: true },
+    { field: "price", headerName: "price", editable: true, valueParser: p => Number(p.newValue) || p.oldValue },
+    { field: "electric", headerName: 'electric', editable: true,
+      cellRenderer: 'agCheckboxCellRenderer', cellEditor: 'agCheckboxCellEditor'
+    }
+  ];
+  const columnDefs = loadStoredCols() || defaultColDefs;
+
+  // Will hold the grid and column APIs once ready
+  let gridApi = null;
+  let columnApi = null;
+
+  // Debounced persistence (avoid multiple writes during rapid edits)
+  let persistTimer = null;
+  function schedulePersist(immediate = false) {
+    if (!gridApi) return; // API not ready yet
+    if (persistTimer) clearTimeout(persistTimer);
+    if (immediate) return persistAll();
+    persistTimer = setTimeout(persistAll, 80); // shorter debounce
   }
 
-  // Use a `tf.tidy` scope to make sure that WebGL memory allocated for the
-  // `predict` call is released at the end.
-  tf.tidy(() => {
-    // Prepare input data as a 2D `tf.Tensor`.
-    const inputData = ui.getManualInputData();
-    const input = tf.tensor2d([inputData], [1, 4]);
+  // Helper to pull all row data from the grid and store it
+  function persistAll() {
+    if (!gridApi) return; // Guard against early calls
+    const rows = [];
+    gridApi.forEachNode(node => rows.push(node.data));
+    saveStoredData(rows);
+    console.log('[Grid] Persisted', rows.length, 'rows to localStorage.');
+  }
 
-    // Call `model.predict` to get the prediction output as probabilities for
-    // the Iris flower categories.
+  // grid persistence on cell edits (no skipFlush needed)
 
-    const predictOut = model.predict(input);
-    const logits = Array.from(predictOut.dataSync());
-    const winner = data.IRIS_CLASSES[predictOut.argMax(-1).dataSync()[0]];
-    ui.setManualInputWinnerMessage(winner);
-    ui.renderLogitsForManualInput(logits);
-  });
-}
-
-/**
- * Draw confusion matrix.
- */
-async function calculateAndDrawConfusionMatrix(model, xTest, yTest) {
-  const [preds, labels] = tf.tidy(() => {
-    const preds = model.predict(xTest).argMax(-1);
-    const labels = yTest.argMax(-1);
-    return [preds, labels];
-  });
-
-  const confMatrixData = await tfvis.metrics.confusionMatrix(labels, preds);
-  const container = document.getElementById('confusion-matrix');
-  tfvis.render.confusionMatrix(
-      container,
-      {values: confMatrixData, labels: data.IRIS_CLASSES},
-      {shadeDiagonal: true},
-  );
-
-  tf.dispose([preds, labels]);
-}
-
-/**
- * Run inference on some test Iris flower data.
- *
- * @param model The instance of `tf.Model` to run the inference with.
- * @param xTest Test data feature, a `tf.Tensor` of shape [numTestExamples, 4].
- * @param yTest Test true labels, one-hot encoded, a `tf.Tensor` of shape
- *   [numTestExamples, 3].
- */
-async function evaluateModelOnTestData(model, xTest, yTest) {
-  // ui.clearEvaluateTable();
-
-  // tf.tidy(() => {
-  //   const xData = xTest.dataSync();
-  //   const yTrue = yTest.argMax(-1).dataSync();
-  //   const predictOut = model.predict(xTest);
-  //   const yPred = predictOut.argMax(-1);
-  //   ui.renderEvaluateTable(
-  //       xData, yTrue, yPred.dataSync(), predictOut.dataSync());
-  //   calculateAndDrawConfusionMatrix(model, xTest, yTest);
-  // });
-
-  // predictOnManualInput(model);
-}
-
-const HOSTED_MODEL_JSON_URL =
-    'https://storage.googleapis.com/tfjs-models/tfjs/iris_v1/model.json';
-
-/**
- * The main function of the Iris demo.
- */
-async function iris() {
-  // CSV upload handler
-  const csvInput = document.getElementById('csv-upload');
-  const csvBtn = document.getElementById('csv-upload-btn');
-  let csvData;
-  csvBtn.addEventListener('click', () => {
-    if (!csvInput.files || !csvInput.files[0]) {
-      alert('Please select a CSV file first.');
-      return;
-    }
-    const file = csvInput.files[0];
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const text = e.target.result;
-      const headerCheckbox = document.getElementById('csv-header-checkbox');
-      const firstRowIsHeader = headerCheckbox.checked;
-      let columnNames;
-      csvData = data.parseCsvData(text);
-      columnNames = firstRowIsHeader ? csvData[0] : Array.from({length: csvData[0].length}, (_, i) => `Column ${i}`);
-      if (firstRowIsHeader) {
-        csvData = csvData.slice(1); // Remove header row from data
+  // Grid Options: Contains all of the Data Grid configurations
+  const gridOptions = {
+    rowData,
+    columnDefs,
+    defaultColDef: { editable: true, resizable: true, sortable: true, filter: true },
+    rowSelection: 'multiple',
+    suppressRowClickSelection: false,
+    singleClickEdit: true,
+    stopEditingWhenCellsLoseFocus: true,
+    // Persist after a cell finishes editing
+    onCellEditingStopped: () => schedulePersist(),
+    onCellValueChanged: (e) => {
+      // Basic validation for price
+      if (e.colDef.field === 'price' && (isNaN(e.newValue) || e.newValue < 0)) {
+        e.node.setDataValue('price', e.oldValue);
+        alert('Price must be a positive number.');
+        return;
       }
-      console.log('Parsed CSV array:', csvData);
-      const previewDiv = document.getElementById('csv-preview-table');
-      ui.renderCsvTable(previewDiv, csvData, columnNames);
+      schedulePersist();
+    },
+    onRowValueChanged: () => schedulePersist(),
+    pagination: true,
+    paginationPageSize: 10,
+    onGridReady: params => {
+      gridApi = params.api;
+      columnApi = params.columnApi;
+  console.log('[Grid] Loaded data rows:', rowData.length);
+  schedulePersist(true);
+  // Initialize modal and toolbar now that gridApi is ready
+  initModal(params.api, gridOptions, document.getElementById('myGrid'));
+  initToolbar(params.api, document.getElementById('myGrid'));
+    },
+    // Allow header renaming on double-click
+    onHeaderCellDoubleClicked: params => {
+      // Prevent sort on header double-click
+      const domEvent = params.event || params.e;
+      if (domEvent && domEvent.stopPropagation) {
+        domEvent.stopPropagation();
+        domEvent.stopImmediatePropagation();
+      }
+      // Rename header
+      const col = params.column;
+      const current = col.getColDef().headerName || col.getColId();
+      const newName = prompt('Rename column:', current);
+      if (newName != null && newName !== current) {
+        col.getColDef().headerName = newName;
+        gridApi.refreshHeader();
+      }
+    }
+  };
 
-      // Update dropdowns for KEPLER_FEATURES column mapping
-      const featuresMappingDiv = document.getElementById('features-mapping');
-      ui.renderFeaturesMapping(featuresMappingDiv, data.FEATURES, columnNames, data.FEATURES_COLUMN_NAMES);
+  // After grid creation, wire up Delete Selected button
+  const myGridElement = document.getElementById('myGrid');
+  createGrid(myGridElement, gridOptions);
 
-      const labelMappingDiv = document.getElementById('label-mapping');
-      ui.renderLabelMapping(labelMappingDiv, data.LABEL, columnNames, data.LABEL_COLUMN_NAMES);
-    };
-    reader.readAsText(file);
-  });
-  
-  // let [xTrain, yTrain, xTest, yTest] = data.splitData(data.IRIS_DATA, 0.15);
-
-  const localLoadButton = document.getElementById('load-local');
-  const localSaveButton = document.getElementById('save-local');
-  const localRemoveButton = document.getElementById('remove-local');
-  const trainButton = document.getElementById('train-submit');
-
-  document.getElementById('train-form')
-      .addEventListener('submit', async (event) => {
-        event.preventDefault();
-        // Add assert
-        if (!csvData) {
-          alert('Please upload and parse a CSV file first.');
-          return;
-        }
-
-        trainButton.disabled = true;
-        // Log all form data
-        const formData = new FormData(event.target);
-        // for (const [key, value] of formData.entries()) {
-        //   console.log(`${key}: ${value}`);
-        // }
-        const featuresMappingIndices = [];
-        for (let i = 0; i < data.FEATURES.length; i++) {
-          const mappingKey = `mapping-feature-${i}`;
-          const mappedIndex = formData.get(mappingKey);
-          if (mappedIndex === null) {
-            alert(`Please select a column for feature "${data.FEATURES[i]}".`);
-            return;
-          }
-          featuresMappingIndices.push(parseInt(mappedIndex));
-        }
-        const labelMappingKey = 'mapping-label';
-        let labelMappedIndex = formData.get(labelMappingKey);
-        if (labelMappedIndex === null) {
-          alert('Please select a column for the label.');
-          return;
-        }
-        labelMappedIndex = parseInt(labelMappedIndex);
-
-        console.log('Features mapping indices:', featuresMappingIndices);
-        console.log('Label mapping index:', labelMappedIndex);
-
-        const parsedData = data.getData(csvData, featuresMappingIndices, labelMappedIndex);
-        console.log('Parsed data:', parsedData);
-
-        const [xTrain, yTrain, xTest, yTest] = data.splitData(parsedData, 0.15);
-        
-        
-
-        model = await trainModel(xTrain, yTrain, xTest, yTest);
-        // await evaluateModelOnTestData(model, xTest, yTest);
-        localSaveButton.disabled = false;
-        trainButton.disabled = false;
-      });
-
-  if (await loader.urlExists(HOSTED_MODEL_JSON_URL)) {
-    ui.status('Model available: ' + HOSTED_MODEL_JSON_URL);
-    const button = document.getElementById('load-pretrained-remote');
-    button.addEventListener('click', async () => {
-      // ui.clearEvaluateTable();
-      model = await loader.loadHostedPretrainedModel(HOSTED_MODEL_JSON_URL);
-      await predictOnManualInput(model);
-      localSaveButton.disabled = false;
+  // Extracted toolbar initialization
+  function initToolbar(gridApi, gridContainer) {
+    document.getElementById('addRowBtn').addEventListener('click', () => {
+      const newItem = { make: '', model: '', price: 0, electric: false };
+      const res = gridApi.applyTransaction({ add: [newItem] });
+      schedulePersist(true);
+      const rowNode = res.add[0];
+      gridApi.ensureNodeVisible(rowNode, 'bottom');
+      gridApi.startEditingCell({ rowIndex: rowNode.rowIndex, colKey: 'make' });
+    });
+    document.getElementById('deleteSelectedBtn').addEventListener('click', () => {
+      const selected = gridApi.getSelectedRows();
+      if (!selected.length) return alert('No rows selected.');
+      if (!confirm(`Delete ${selected.length} selected row(s)?`)) return;
+      gridApi.applyTransaction({ remove: selected });
+      schedulePersist(true);
+    });
+    document.getElementById('resetDataBtn').addEventListener('click', () => {
+      if (!confirm('Reset to original data?')) return;
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(COLS_KEY);
+      location.reload();
     });
   }
 
-  localLoadButton.addEventListener('click', async () => {
-    model = await loader.loadModelLocally();
-    await predictOnManualInput(model);
-  });
+  // Initialize modal logic for editing column names
+  function initModal(gridApi, gridOptions, gridContainer) {
+    const editBtn = document.getElementById('editColumnsBtn');
+    const modal = document.getElementById('columnModal');
+    const form = document.getElementById('columnForm');
+    const fieldsContainer = document.getElementById('columnFields');
+    const cancelBtn = document.getElementById('cancelColumnsBtn');
 
-  localSaveButton.addEventListener('click', async () => {
-    await loader.saveModelLocally(model);
-    await loader.updateLocalModelStatus();
-  });
+    if (editBtn && modal && form && fieldsContainer) {
+      editBtn.addEventListener('click', () => {
+        fieldsContainer.innerHTML = '';
+        gridOptions.columnDefs.forEach(def => {
+          if (def.field) {
+            const label = document.createElement('label');
+            label.textContent = def.field;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.name = def.field;
+            input.value = def.headerName || def.field;
+            input.style.width = '100%';
+            fieldsContainer.appendChild(label);
+            fieldsContainer.appendChild(input);
+          }
+        });
+        modal.style.display = 'flex';
+      });
+      cancelBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+      });
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        const formData = new FormData(form);
+        const newDefs = gridOptions.columnDefs.map(def => {
+          if (def.field && formData.has(def.field)) {
+            def.headerName = formData.get(def.field);
+          }
+          return def;
+        });
+        gridOptions.columnDefs = newDefs;
+        saveStoredCols(newDefs);
+        gridContainer.innerHTML = '';
+        createGrid(gridContainer, gridOptions);
+        modal.style.display = 'none';
+      });
+    }
+  }
 
-  localRemoveButton.addEventListener('click', async () => {
-    await loader.removeModelLocally();
-    await loader.updateLocalModelStatus();
-  });
-
-  await loader.updateLocalModelStatus();
-
-  ui.status('Standing by.');
-  // ui.wireUpEvaluateTableCallbacks(() => predictOnManualInput(model));
-
-  const featuresMappingDiv = document.getElementById('features-mapping');
-  ui.renderFeaturesMapping(featuresMappingDiv, data.FEATURES); // Render with no options initially
-  const labelMappingDiv = document.getElementById('label-mapping');
-  ui.renderLabelMapping(labelMappingDiv, data.LABEL);
+  // Expose debug helpers (after grid init so api exists soon after microtask)
+  window.dumpSelectedRows = () => {
+    if (!gridApi) return console.log('Grid API not ready');
+    console.log(gridApi.getSelectedRows());
+  };
+  window.dumpStoredGrid = () => console.log(JSON.parse(localStorage.getItem(STORAGE_KEY)));
+  window.resetGridData = () => { localStorage.removeItem(STORAGE_KEY); location.reload(); };
 }
 
-// document.addEventListener('DOMContentLoaded', () => {
-//   const mappingDiv = document.getElementById('features-mapping');
-//   ui.renderMapping(mappingDiv, data.FEATURES); // Render with no options initially
-// });
+main();
 
-tf.setBackend('webgl');
-console.log(`Backend set to: ${tf.getBackend()}`);
-iris();
+// Grid Options: Contains all of the Data Grid configurations

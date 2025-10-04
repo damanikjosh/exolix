@@ -22,6 +22,10 @@ import * as ui from './ui';
  * Test whether a given URL is retrievable.
  */
 export async function urlExists(url) {
+  if (!url) {
+    console.warn('URL of the model is not provided.');
+    return false;
+  }
   ui.status('Testing url ' + url);
   try {
     const response = await fetch(url, {method: 'HEAD'});

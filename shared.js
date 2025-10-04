@@ -1,0 +1,42 @@
+// Shared utilities for ExoLiX
+
+// Navigation template
+const navTemplate = `
+<nav class="bg-white shadow-sm">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between h-16">
+      <div class="flex items-center">
+        <a href="landing.html" class="text-2xl font-bold text-indigo-600">ExoLiX</a>
+      </div>
+      <div class="flex items-center space-x-4">
+        <a href="landing.html" class="nav-link text-gray-600 hover:text-gray-900" data-page="landing">Home</a>
+        <a href="multiTableExplorer.html" class="nav-link text-gray-600 hover:text-gray-900" data-page="explorer">Data Explorer</a>
+        <a href="featureMapping.html" class="nav-link text-gray-600 hover:text-gray-900" data-page="mapping">Feature Mapping</a>
+        <a href="training.html" class="nav-link text-gray-600 hover:text-gray-900" data-page="training">Train Model</a>
+      </div>
+    </div>
+  </div>
+</nav>
+`;
+
+// Load navigation component and set active page
+export function loadNavigation(activePage) {
+  const navContainer = document.getElementById('nav-container');
+  
+  if (!navContainer) {
+    console.error('Nav container not found!');
+    return;
+  }
+  
+  // Insert navigation template
+  navContainer.innerHTML = navTemplate;
+  
+  // Set active page
+  if (activePage) {
+    const activeLink = document.querySelector(`.nav-link[data-page="${activePage}"]`);
+    if (activeLink) {
+      activeLink.classList.remove('text-gray-600', 'hover:text-gray-900');
+      activeLink.classList.add('text-gray-900', 'font-medium');
+    }
+  }
+}

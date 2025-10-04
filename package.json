@@ -10,6 +10,7 @@
   "dependencies": {
     "@tensorflow/tfjs": "^2.6.0",
     "@tensorflow/tfjs-vis": "^1.4.3",
+    "ag-grid-community": "^34.2.0",
     "csv-parse": "^6.1.0"
   },
   "scripts": {
@@ -23,6 +24,7 @@
     "clang-format": "~1.2.2",
     "cross-env": "^5.1.6",
     "events": "^3.3.0",
+    "http-server": "^14.1.1",
     "parcel": "~2.3.2",
     "process": "^0.11.10",
     "stream-browserify": "^3.0.0",
