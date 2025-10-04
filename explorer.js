@@ -55,9 +55,14 @@ function getFeatureForColumn(tableName, columnName) {
 // Presets for common datasets
 const PRESETS = {
   kepler: {
-    name: 'Kepler Cumulative 2025',
-    url: 'static/cumulative_2025.09.29_21.37.15.csv',
-    datasetId: 'cumulative_2025'
+    name: 'Kepler Object of Interest 2025',
+    url: 'data/cumulative_2025.09.29_21.37.15.csv',
+    datasetId: 'koi_2025'
+  },
+  tess: {
+    name: 'TESS Object of Interest 2025',
+    url: 'data/TOI_2025.10.01_18.37.10.csv',
+    datasetId: 'toi_2025'
   }
 };
 
@@ -467,9 +472,9 @@ async function sendToTraining() {
     console.log(`📸 Training snapshot created: ${tablesData.length} table(s), ${totalRows} total rows`);
     console.log('🔒 This snapshot is now isolated from Data Explorer changes');
     
-    console.log('Navigating to featureMapping.html...');
+    console.log('Navigating to mapping.html...');
     // Navigate to feature mapping page
-    window.location.href = 'featureMapping.html';
+    window.location.href = 'mapping.html';
   } catch (e) {
     console.error('❌ Error saving training selection:', e);
     console.error('Error stack:', e.stack);

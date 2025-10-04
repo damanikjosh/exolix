@@ -231,9 +231,9 @@ function displayDataInfo(loadResult) {
         <p>No training data available.</p>
         <div class="empty-instructions">
           Please complete these steps:<br>
-          1. Go to <a href="multiTableExplorer.html" class="link-primary">Data Explorer</a> and select rows<br>
+          1. Go to <a href="explorer.html" class="link-primary">Explorer</a> and select rows<br>
           2. Click "Send to Training"<br>
-          3. Define features in <a href="featureMapping.html" class="link-primary">Feature Mapping</a><br>
+          3. Define features in <a href="mapping.html" class="link-primary">Mapping</a><br>
           4. Return here to train
         </div>
         ${loadResult && loadResult.error ? `<div class="empty-error">Error: ${loadResult.error}</div>` : ''}

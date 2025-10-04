@@ -19,7 +19,7 @@ async function loadTrainingData() {
       document.getElementById('dataInfo').innerHTML = `
         <p class="text-orange-600">No training data selected.</p>
         <p class="text-gray-600 mt-2">
-          Please go to the <a href="multiTableExplorer.html" class="text-indigo-600 hover:underline">Data Explorer</a> 
+          Please go to the <a href="explorer.html" class="link-primary">Explorer</a> 
           and select data from tables.
         </p>
       `;
@@ -36,7 +36,7 @@ async function loadTrainingData() {
       document.getElementById('dataInfo').innerHTML = `
         <p class="text-orange-600">No training data with selected rows found.</p>
         <p class="text-gray-600 mt-2">
-          Please go to the <a href="multiTableExplorer.html" class="text-indigo-600 hover:underline">Data Explorer</a> 
+          Please go to the <a href="explorer.html" class="link-primary">Explorer</a> 
           and select rows from at least one table.
         </p>
       `;
