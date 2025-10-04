@@ -275,7 +275,7 @@ async function iris() {
   await loader.updateLocalModelStatus();
 
   ui.status('Standing by.');
-  ui.wireUpEvaluateTableCallbacks(() => predictOnManualInput(model));
+  // ui.wireUpEvaluateTableCallbacks(() => predictOnManualInput(model));
 
   const featuresMappingDiv = document.getElementById('features-mapping');
   ui.renderFeaturesMapping(featuresMappingDiv, data.FEATURES); // Render with no options initially
