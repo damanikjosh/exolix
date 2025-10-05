@@ -608,25 +608,40 @@ async function trainModel(features, config, statusContainer) {
   const beginMs = performance.now();
   
   statusContainer.innerHTML = `
-    <div id="training-status-message">
-      <p class="status-info" style="margin-bottom: 1rem;">🎯 Training model...</p>
+    <div id=\"training-status-message\">
+      <p class=\"status-info\" style=\"margin-bottom:1rem;\">🎯 Training model...</p>
     </div>
-    <div id="training-progress" style="display: flex; flex-direction: column; gap: 1rem;"></div>
-    <div class="grid-cols-2" style="margin-top: 1rem;">
-      <div class="chart-container">
-        <h4 class="chart-title">Loss</h4>
-        <div id="lossCanvas"></div>
-      </div>
-      <div class="chart-container">
-        <h4 class="chart-title">Accuracy</h4>
-        <div id="accuracyCanvas"></div>
-      </div>
-    </div>
-    <div style="margin-top: 1rem;">
-      <h4 class="chart-title" style="margin-bottom: 0.5rem;">Confusion Matrix (Validation Set)</h4>
-      <div id="confusion-matrix"></div>
+    <div id=\"training-progress\" style=\"display:flex;flex-direction:column;gap:1rem;\"></div>
+    <!-- Charts Grid: layout only -->
+    <div class=\"charts-grid\" style=\"display:grid;grid-template-columns:1fr;gap:1rem;margin-top:1.5rem;\"></div>
+    <div style=\"margin-top:1rem;\">
+      <h4 class=\"chart-title\" style=\"margin-bottom:0.5rem;\">Confusion Matrix (Validation Set)</h4>
+      <div id=\"confusion-matrix\"></div>
     </div>
   `;
+  // Inject chart containers separately so we can adjust columns via media query without extra styling classes
+  const chartsGridEl = statusContainer.querySelector('.charts-grid');
+  if (chartsGridEl) {
+    chartsGridEl.innerHTML = `
+      <div class=\"chart-container\">
+        <h4 class=\"chart-title\">Loss</h4>
+        <div id=\"lossCanvas\"></div>
+      </div>
+      <div class=\"chart-container\">
+        <h4 class=\"chart-title\">Accuracy</h4>
+        <div id=\"accuracyCanvas\"></div>
+      </div>`;
+    // Simple responsive adjustment: switch to two columns above 768px
+    const resizeCharts = () => {
+      if (window.innerWidth >= 768) {
+        chartsGridEl.style.gridTemplateColumns = '1fr 1fr';
+      } else {
+        chartsGridEl.style.gridTemplateColumns = '1fr';
+      }
+    };
+    window.addEventListener('resize', resizeCharts);
+    resizeCharts();
+  }
   
   const history = await model.fit(xTrain, yTrain, {
     epochs: config.epochs,
@@ -644,34 +659,43 @@ async function trainModel(features, config, statusContainer) {
         if (progressDiv) {
           const progress = ((epoch + 1) / config.epochs * 100).toFixed(1);
           progressDiv.innerHTML = `
-            <div class="progress-container">
-              <div class="progress-header">
-                <span class="progress-label">Epoch ${epoch + 1}/${config.epochs}</span>
-                <span class="progress-info">${progress}% - ${timeToGo.toFixed(1)}s remaining</span>
+            <div class=\"progress-container\">
+              <div class=\"progress-header\">
+                <span class=\"progress-label\">Epoch ${epoch + 1}/${config.epochs}</span>
+                <span class=\"progress-info\">${progress}% - ${timeToGo.toFixed(1)}s remaining</span>
               </div>
-              <div class="progress-bar-track">
-                <div class="progress-bar-fill" style="width: ${progress}%"></div>
+              <div class=\"progress-bar-track\">
+                <div class=\"progress-bar-fill\" style=\"width: ${progress}%\"></div>
               </div>
             </div>
-            <div class="grid-cols-4" style="font-size: 0.875rem; margin-top: 0.75rem;">
-              <div class="metric-card card-blue">
-                <p class="metric-label">Training Loss</p>
-                <p class="metric-value">${logs.loss.toFixed(4)}</p>
+            <div class=\"metrics-grid\" style=\"display:grid;grid-template-columns:repeat(2,1fr);gap:0.75rem;font-size:0.75rem;margin-top:0.75rem;\">
+              <div class=\"metric-card card-blue\">
+                <p class=\"metric-label\">Training Loss</p>
+                <p class=\"metric-value\">${logs.loss.toFixed(4)}</p>
               </div>
-              <div class="metric-card card-green">
-                <p class="metric-label">Training Accuracy</p>
-                <p class="metric-value">${(logs.acc * 100).toFixed(2)}%</p>
+              <div class=\"metric-card card-green\">
+                <p class=\"metric-label\">Training Accuracy</p>
+                <p class=\"metric-value\">${(logs.acc * 100).toFixed(2)}%</p>
               </div>
-              <div class="metric-card card-orange">
-                <p class="metric-label">Validation Loss</p>
-                <p class="metric-value">${logs.val_loss.toFixed(4)}</p>
+              <div class=\"metric-card card-orange\">
+                <p class=\"metric-label\">Validation Loss</p>
+                <p class=\"metric-value\">${logs.val_loss.toFixed(4)}</p>
               </div>
-              <div class="metric-card card-purple">
-                <p class="metric-label">Validation Accuracy</p>
-                <p class="metric-value">${(logs.val_acc * 100).toFixed(2)}%</p>
+              <div class=\"metric-card card-purple\">
+                <p class=\"metric-label\">Validation Accuracy</p>
+                <p class=\"metric-value\">${(logs.val_acc * 100).toFixed(2)}%</p>
               </div>
             </div>
           `;
+          // Responsive columns for metrics grid only (layout without style changes)
+          const metricsGrid = progressDiv.querySelector('.metrics-grid');
+          if (metricsGrid) {
+            if (window.innerWidth >= 768) {
+              metricsGrid.style.gridTemplateColumns = 'repeat(4,1fr)';
+            } else {
+              metricsGrid.style.gridTemplateColumns = 'repeat(2,1fr)';
+            }
+          }
         }
         
         // Update charts

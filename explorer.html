@@ -13,6 +13,23 @@
     .tab-content { display: none; height: 100%; }
     .tab-content.active { display: block; height: 100%; }
     .grid-container { height: 100%; width: 100%; }
+    /* Responsive full-screen modal adjustments for small screens */
+    #addTableModal .modal-panel { max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; }
+    #addTableModal .modal-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    @media (max-width: 640px) {
+      #addTableModal { align-items: stretch; justify-content: stretch; }
+      #addTableModal .modal-panel {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: 100%;
+        margin: 0;
+        border-radius: 0;
+        overflow: hidden; /* inner scroll handles */
+      }
+      #addTableModal .modal-scroll { padding-right: .75rem; }
+      body.overflow-hidden { overflow: hidden; }
+    }
   </style>
 </head>
 <body>
@@ -115,110 +132,110 @@
 
   <!-- Add Table Modal -->
   <div id="addTableModal" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-    <div class="card rounded-xl p-6 max-w-2xl w-full mx-4">
-      <h3 class="text-2xl font-semibold mb-6 text-white text-center">Add New Dataset</h3>
-      
-      <!-- Quick Start Presets -->
-      <div class="mb-8">
-        <h4 class="text-lg font-medium text-gray-300 mb-4 text-center">🚀 Quick Start with NASA Data</h4>
-  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          <!-- Kepler Button -->
-          <button id="keplerPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-purple-500/50">
-            <div class="relative z-10">
-              <div class="text-5xl mb-3">🪐</div>
-              <h5 class="text-xl font-bold text-white mb-2">Kepler</h5>
-              <p class="text-sm text-purple-100">Object of Interest 2025</p>
-              <p class="text-xs text-purple-200 mt-2 opacity-80">Auto-configured features</p>
-            </div>
-            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </button>
-          
-          <!-- TESS Button -->
-          <button id="tessPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-orange-500/50">
-            <div class="relative z-10">
-              <div class="text-5xl mb-3">🛰️</div>
-              <h5 class="text-xl font-bold text-white mb-2">TESS</h5>
-              <p class="text-sm text-orange-100">Object of Interest 2025</p>
-              <p class="text-xs text-orange-200 mt-2 opacity-80">Latest exoplanet data</p>
-            </div>
-            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </button>
-
-          <!-- Combined Kepler + TESS Button -->
-          <button id="combinedPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-emerald-500/50">
-            <div class="relative z-10">
-              <div class="text-5xl mb-3">🧬</div>
-              <h5 class="text-xl font-bold text-white mb-2">Combined</h5>
-              <p class="text-sm text-emerald-100">Kepler + TESS Unified</p>
-              <p class="text-xs text-emerald-200 mt-2 opacity-80">Cross-mapped features & labels</p>
-            </div>
-            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </button>
-
-          <!-- K2 Button -->
-          <button id="k2PresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-indigo-600 to-fuchsia-600 hover:from-indigo-500 hover:to-fuchsia-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-fuchsia-500/50">
-            <div class="relative z-10">
-              <div class="text-5xl mb-3">🔭</div>
-              <h5 class="text-xl font-bold text-white mb-2">K2</h5>
-              <p class="text-sm text-indigo-100">Campaigns 2025</p>
-              <p class="text-xs text-indigo-200 mt-2 opacity-80">LLM-only classification</p>
-            </div>
-            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </button>
-        </div>
-      </div>
-      
-      <!-- Divider -->
-      <div class="relative mb-8">
-        <div class="absolute inset-0 flex items-center">
-          <div class="w-full border-t border-gray-700"></div>
-        </div>
-        <div class="relative flex justify-center text-sm">
-          <span class="px-4 bg-gray-900 text-gray-400">or use custom data</span>
-        </div>
-      </div>
-      
-      <!-- Custom Data Options -->
-      <div class="space-y-4">
-        <!-- Tab Selection -->
-        <div class="border-b border-gray-700">
-          <div class="flex space-x-4">
-            <button id="urlTab" class="px-4 py-2 border-b-2 border-blue-500 text-blue-400 font-medium">URL</button>
-            <button id="uploadTab" class="px-4 py-2 text-gray-400 hover:text-gray-200">Upload File</button>
-          </div>
-        </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">Table Name</label>
-          <input id="tableNameInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="e.g., My Custom Dataset">
-        </div>
-        
-        <!-- URL Input (default) -->
-        <div id="urlSection">
-          <label class="block text-sm font-medium text-gray-300 mb-2">CSV File URL</label>
-          <input id="csvUrlInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="static/your-file.csv">
-        </div>
-        
-        <!-- File Upload Section (hidden by default) -->
-        <div id="uploadSection" class="hidden">
-          <label class="block text-sm font-medium text-gray-300 mb-2">Upload CSV File</label>
-          <div class="flex items-center justify-center w-full">
-            <label class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-700 border-dashed rounded-lg cursor-pointer hover:bg-gray-800">
-              <div class="flex flex-col items-center justify-center pt-5 pb-6">
-                <svg class="w-8 h-8 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                </svg>
-                <p class="text-sm text-gray-300"><span class="font-semibold">Click to upload</span> or drag and drop</p>
-                <p class="text-xs text-gray-500">CSV files only</p>
+    <div class="card rounded-xl p-6 max-w-2xl w-full mx-4 modal-panel">
+      <h3 class="text-2xl font-semibold mb-6 text-white text-center shrink-0">Add New Dataset</h3>
+      <div class="modal-scroll">
+        <!-- Quick Start Presets -->
+        <div class="mb-8">
+          <h4 class="text-lg font-medium text-gray-300 mb-4 text-center">🚀 Quick Start with NASA Data</h4>
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <!-- Kepler Button -->
+            <button id="keplerPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-purple-500/50">
+              <div class="relative z-10">
+                <div class="text-5xl mb-3">🪐</div>
+                <h5 class="text-xl font-bold text-white mb-2">Kepler</h5>
+                <p class="text-sm text-purple-100">Object of Interest 2025</p>
+                <p class="text-xs text-purple-200 mt-2 opacity-80">Auto-configured features</p>
               </div>
-              <input id="csvFileInput" type="file" accept=".csv" class="hidden">
-            </label>
+              <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
+            
+            <!-- TESS Button -->
+            <button id="tessPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-orange-500/50">
+              <div class="relative z-10">
+                <div class="text-5xl mb-3">🛰️</div>
+                <h5 class="text-xl font-bold text-white mb-2">TESS</h5>
+                <p class="text-sm text-orange-100">Object of Interest 2025</p>
+                <p class="text-xs text-orange-200 mt-2 opacity-80">Latest exoplanet data</p>
+              </div>
+              <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
+
+            <!-- Combined Kepler + TESS Button -->
+            <button id="combinedPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-emerald-500/50">
+              <div class="relative z-10">
+                <div class="text-5xl mb-3">🧬</div>
+                <h5 class="text-xl font-bold text-white mb-2">Combined</h5>
+                <p class="text-sm text-emerald-100">Kepler + TESS Unified</p>
+                <p class="text-xs text-emerald-200 mt-2 opacity-80">Cross-mapped features & labels</p>
+              </div>
+              <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
+
+            <!-- K2 Button -->
+            <button id="k2PresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-indigo-600 to-fuchsia-600 hover:from-indigo-500 hover:to-fuchsia-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-fuchsia-500/50">
+              <div class="relative z-10">
+                <div class="text-5xl mb-3">🔭</div>
+                <h5 class="text-xl font-bold text-white mb-2">K2</h5>
+                <p class="text-sm text-indigo-100">Campaigns 2025</p>
+                <p class="text-xs text-indigo-200 mt-2 opacity-80">LLM-only classification</p>
+              </div>
+              <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
           </div>
-          <p id="uploadFileName" class="text-sm text-gray-400 mt-2"></p>
+        </div>
+        
+        <!-- Divider -->
+        <div class="relative mb-8">
+          <div class="absolute inset-0 flex items-center">
+            <div class="w-full border-t border-gray-700"></div>
+          </div>
+          <div class="relative flex justify-center text-sm">
+            <span class="px-4 bg-gray-900 text-gray-400">or use custom data</span>
+          </div>
+        </div>
+        
+        <!-- Custom Data Options -->
+        <div class="space-y-4">
+          <!-- Tab Selection -->
+          <div class="border-b border-gray-700">
+            <div class="flex space-x-4">
+              <button id="urlTab" class="px-4 py-2 border-b-2 border-blue-500 text-blue-400 font-medium">URL</button>
+              <button id="uploadTab" class="px-4 py-2 text-gray-400 hover:text-gray-200">Upload File</button>
+            </div>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Table Name</label>
+            <input id="tableNameInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="e.g., My Custom Dataset">
+          </div>
+          
+          <!-- URL Input (default) -->
+          <div id="urlSection">
+            <label class="block text-sm font-medium text-gray-300 mb-2">CSV File URL</label>
+            <input id="csvUrlInput" type="text" class="w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-900 text-white" placeholder="static/your-file.csv">
+          </div>
+          
+          <!-- File Upload Section (hidden by default) -->
+          <div id="uploadSection" class="hidden">
+            <label class="block text-sm font-medium text-gray-300 mb-2">Upload CSV File</label>
+            <div class="flex items-center justify-center w-full">
+              <label class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-700 border-dashed rounded-lg cursor-pointer hover:bg-gray-800">
+                <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                  <svg class="w-8 h-8 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                  </svg>
+                  <p class="text-sm text-gray-300"><span class="font-semibold">Click to upload</span> or drag and drop</p>
+                  <p class="text-xs text-gray-500">CSV files only</p>
+                </div>
+                <input id="csvFileInput" type="file" accept=".csv" class="hidden">
+              </label>
+            </div>
+            <p id="uploadFileName" class="text-sm text-gray-400 mt-2"></p>
+          </div>
         </div>
       </div>
-      
-      <div class="flex justify-end space-x-2 mt-6">
+      <div class="flex justify-end space-x-2 mt-6 shrink-0">
         <button id="cancelAddTable" class="px-4 py-2 text-gray-400 hover:bg-gray-800 rounded transition">Cancel</button>
         <button id="confirmAddTable" class="btn-primary px-4 py-2 rounded">Add Custom Table</button>
       </div>
@@ -232,5 +249,19 @@
     initStarfield();
   </script>
   <script type="module" src="explorer.js"></script>
-</body>
-</html>
+  <script>
+    // Manage body scroll locking when modal is open for mobile usability
+    (function(){
+      const modal = document.getElementById('addTableModal');
+      if (!modal) return;
+      function lockScroll(){ document.body.classList.add('overflow-hidden'); }
+      function unlockScroll(){ document.body.classList.remove('overflow-hidden'); }
+      const observer = new MutationObserver(() => {
+        if (!modal.classList.contains('hidden')) { lockScroll(); } else { unlockScroll(); }
+      });
+      observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+      modal.addEventListener('click', (e) => { if (e.target === modal) { modal.classList.add('hidden'); unlockScroll(); }});
+    })();
+  </script>
+ </body>
+ </html>
