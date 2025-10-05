@@ -16,6 +16,8 @@
     /* Responsive full-screen modal adjustments for small screens */
     #addTableModal .modal-panel { max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; }
     #addTableModal .modal-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    /* Prevent tab bar from wrapping to multiple lines */
+    #tabNavigation { white-space: nowrap; }
     @media (max-width: 640px) {
       #addTableModal { align-items: stretch; justify-content: stretch; }
       #addTableModal .modal-panel {
@@ -43,8 +45,9 @@
         <div id="tabNavigation" class="flex space-x-1 overflow-x-auto">
           <!-- Tabs will be added here dynamically -->
         </div>
-        <button id="addTableBtn" class="ml-4 px-3 py-2 text-blue-400 hover:bg-gray-800 rounded transition">
-          + Add Table
+        <button id="addTableBtn" class="ml-4 px-3 py-2 text-blue-400 hover:bg-gray-800 rounded transition flex items-center gap-1">
+          <span aria-hidden="true">+</span><span class="hidden sm:inline">Add Table</span>
+          <span class="sr-only sm:not-sr-only sm:hidden">Add Table</span>
         </button>
       </div>
     </div>
@@ -52,7 +55,7 @@
 
   <!-- Toolbar -->
   <div class="border-b border-gray-800 px-4 py-3">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div class="flex items-center space-x-4">
         <h2 id="tableTitle" class="text-xl font-semibold text-white">Table 1</h2>
         <span id="selectedCount" class="text-sm text-gray-400">0 selected</span>
