@@ -129,103 +129,102 @@ function concatenateTableData(tableDataArrays) {
 function extractFeatures(concatenatedData, mapping, sortedTables) {
   const inputFeatures = [];
   const outputLabels = [];
-  const outputRawValues = []; // Store raw values for display
-  const tableIndices = []; // Track which table each row came from
-  const tableNames = []; // Track table names for each row
-  
-  // Build label encoder from mapping
+  const outputRawValues = [];
+  const tableIndices = [];
+  const tableNames = [];
+
   let labelEncoder = null;
   if (mapping.labelMapping && mapping.labelMapping.targetLabels) {
     labelEncoder = buildLabelEncoder(mapping.labelMapping);
   } else {
     console.warn('⚠️ No label mapping found in feature mapping');
   }
-  
+
   let skippedCount = 0;
-  
+
   concatenatedData.forEach(rowData => {
     const record = rowData.record;
     const sourceTableIndex = rowData.tableIndex;
-    
-    // Extract input features - only extract values from columns that belong to this record's table
+
     const inputRow = [];
-    let hasInvalidFeature = false;
-    
     mapping.inputFeatures.forEach(feature => {
-        // Each feature may have columns from multiple tables.
-        // Old implementation always had fixed-length feature vectors. To mimic that
-        // we push 0 when a feature isn't present for this table to keep dimensional consistency.
-        const columnForThisTable = feature.columns.find(col => col.tableIndex === sourceTableIndex);
-        if (columnForThisTable) {
-          const value = record[columnForThisTable.columnName];
-          if (value === null || value === undefined || isNaN(value)) {
-            hasInvalidFeature = true;
-          }
-          inputRow.push(value !== undefined && value !== null ? value : 0);
+      const columnForThisTable = feature.columns.find(col => col.tableIndex === sourceTableIndex);
+      if (columnForThisTable) {
+        const raw = record[columnForThisTable.columnName];
+        // Accept blanks or non-numeric: convert to 0.0 rather than skipping row
+        if (raw === '' || raw === null || raw === undefined) {
+          inputRow.push(0.0);
         } else {
-          // Fill missing feature with 0 to preserve uniform length
-          inputRow.push(0);
+          const num = Number(raw);
+            inputRow.push(Number.isFinite(num) ? num : 0.0);
         }
+      } else {
+        inputRow.push(0.0); // missing feature for this table
+      }
     });
-    
-    // Extract output label - use the output column from this record's source table
-    const outputColumnForThisTable = mapping.outputFeature.columns.find(
-      col => col.tableIndex === sourceTableIndex
-    );
-    
+
+    // Output label handling
+    const outputColumnForThisTable = mapping.outputFeature.columns.find(c => c.tableIndex === sourceTableIndex);
     let outputValue = null;
-    if (outputColumnForThisTable) {
-      outputValue = record[outputColumnForThisTable.columnName];
-    }
-    
-    // Store output value for display purposes
+    if (outputColumnForThisTable) outputValue = record[outputColumnForThisTable.columnName];
     const outputKey = outputValue !== null && outputValue !== undefined ? outputValue : 'unknown';
-    
-    // Encode label using label mapping if available
+
     let encodedLabel = -1;
     if (labelEncoder) {
-      // Try to find encoding for the output value
-      if (outputValue !== null && outputValue !== undefined) {
-        encodedLabel = labelEncoder.encode(outputValue);
-      }
-      
-      if (encodedLabel === null) {
-        encodedLabel = -1; // Use -1 for unmapped values
-      }
+      if (outputValue !== null && outputValue !== undefined) encodedLabel = labelEncoder.encode(outputValue);
+      if (encodedLabel === null) encodedLabel = -1;
     } else {
-      // Fallback: use raw output values
       encodedLabel = outputValue;
     }
-    
-    // Skip rows with invalid features or labels (like old implementation)
-    if (hasInvalidFeature || encodedLabel === -1) {
-      skippedCount++;
-      return; // Skip this row
+
+    // Only skip if label unmapped; feature invalids converted to zeros
+    if (encodedLabel === -1) {
+      skippedCount++; return;
     }
-    
-    // Add valid row
+
     inputFeatures.push(inputRow);
     outputLabels.push(encodedLabel);
     outputRawValues.push(outputKey);
     tableIndices.push(sourceTableIndex);
     tableNames.push(sortedTables[sourceTableIndex].tabName);
   });
-  
+
   if (skippedCount > 0) {
-    console.log(`⚠️ Skipped ${skippedCount} rows with invalid features or unmapped labels`);
+    console.log(`⚠️ Skipped ${skippedCount} rows due to unmapped labels (feature blanks zero-filled)`);
   }
-  
+
   return {
     inputs: inputFeatures,
     outputs: outputLabels,
     outputRaw: outputRawValues,
-    tableIndices: tableIndices,
-    tableNames: tableNames,
+    tableIndices,
+    tableNames,
     inputDimension: inputFeatures[0] ? inputFeatures[0].length : 0,
     outputDimension: labelEncoder ? labelEncoder.numClasses : 1,
     sampleCount: inputFeatures.length,
-    labelEncoder: labelEncoder
+    labelEncoder
   };
+}
+
+// Sanitize numeric matrix just before raw training (defensive pass over extractedFeatures.inputs)
+function sanitizeRawFeatureMatrix(features) {
+  if (!features || !Array.isArray(features.inputs)) return { replaced: 0 };
+  let replaced = 0;
+  features.inputs.forEach(row => {
+    for (let i = 0; i < row.length; i++) {
+      const v = row[i];
+      if (v === '' || v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v)) || (typeof v !== 'number')) {
+        const num = Number(v);
+        if (!Number.isFinite(num)) {
+          row[i] = 0.0; replaced++;
+        } else if (typeof v !== 'number') {
+          row[i] = num; // convert string numeric to number
+        }
+      }
+    }
+  });
+  if (replaced) console.log(`[training] Sanitized feature matrix: replaced ${replaced} invalid/blank values with 0.0`);
+  return { replaced };
 }
 
 // Build label encoder from label mapping
@@ -528,6 +527,8 @@ function buildModel(inputDim, outputDim, mode) {
   return tf.sequential({
     layers: [
       tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'sigmoid' }),
+      // Add batch normalization
+      tf.layers.batchNormalization(),
       tf.layers.dropout({ rate: 0.2 }),
       tf.layers.dense({ units: 64, activation: 'sigmoid' }),
       tf.layers.dense({ units: 8, activation: 'sigmoid' }),
@@ -813,6 +814,11 @@ document.getElementById('startTraining').addEventListener('click', async () => {
   `;
   
   try {
+    // If in raw mode, ensure numeric matrix (convert blanks/non-numerics to 0.0)
+    try {
+      const mode = typeof window.getTrainingInputMode === 'function' ? window.getTrainingInputMode() : 'raw';
+      if (mode === 'raw') sanitizeRawFeatureMatrix(extractedFeatures);
+    } catch (e) { console.warn('[training] Raw data sanitization warning:', e.message); }
     // Train the model
     model = await trainModel(extractedFeatures, config, statusContent);
     

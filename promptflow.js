@@ -37,7 +37,11 @@ function formatWithIndexPlaceholders(template, vector) {
     const i = Number(idx);
     if (!Array.isArray(vector) || i < 0 || i >= vector.length) return 'unknown';
     const v = vector[i];
-    return (v === undefined || v === null || v === '') ? 'unknown' : String(v);
+    // Preserve blank feature values as empty string per user request.
+    // Only out-of-range indices return the literal 'unknown'.
+    if (v === undefined || v === null) return '';
+    if (v === '') return '';
+    return String(v);
   });
 }
 function extractIndices(template) {
@@ -420,34 +424,37 @@ async function buildMatrixLocallyIfMissing() {
       records.forEach(rec => {
         raw++;
         const row = [];
-        let invalid = false;
         mapping.inputFeatures.forEach(f => {
           const col = f.columns.find(c => c.tableIndex === tableIndex);
           if (col) {
             const v = rec[col.columnName];
-            if (v === null || v === undefined || v === '' || Number.isNaN(Number(v))) invalid = true;
-            row.push(v !== undefined && v !== null ? Number(v) : 0);
+            const num = Number(v);
+            if (v === '' || v === null || v === undefined || Number.isNaN(num)) {
+              // Zero-fill instead of marking invalid (align with training.js sanitization)
+              row.push(0.0);
+            } else {
+              row.push(num);
+            }
           } else {
-            row.push(0);
+            row.push(0.0); // feature absent for this table
           }
         });
-        if (invalid) { skippedInvalid++; return; }
-        // Output label check
+        // Output label check (only skip if label not mapped)
         if (valueToIndex) {
           const outCol = mapping.outputFeature && mapping.outputFeature.columns && mapping.outputFeature.columns.find(c => c.tableIndex === tableIndex);
           let outVal = null;
-            if (outCol) outVal = rec[outCol.columnName];
+          if (outCol) outVal = rec[outCol.columnName];
           if (outCol && (outVal === null || outVal === undefined || !valueToIndex.has(outVal))) {
-            skippedUnmapped++; return;
+            skippedUnmapped++; return; // skip only truly unmapped labels
           }
         }
         built.push(row);
       });
     });
-    if (!built.length) { console.warn('[promptflow] Local reconstruction produced 0 usable rows.'); return; }
+    if (!built.length) { console.warn('[promptflow] Local reconstruction produced 0 usable rows after zero-fill.'); return; }
     matrix = built; featureCount = (matrix[0] || []).length;
     matrixStats = { raw, kept: built.length, skippedInvalid, skippedUnmapped };
-    console.log(`[promptflow] ✅ Reconstructed matrix locally: kept ${built.length}/${raw} rows (skipped ${skippedInvalid} invalid, ${skippedUnmapped} unmapped) dims=${featureCount}`);
+    console.log(`[promptflow] ✅ Reconstructed matrix locally (zero-fill blanks): kept ${built.length}/${raw} rows (skipped ${skippedUnmapped} unmapped labels) dims=${featureCount}`);
     renderInfoLine(); updatePreview(); updateSendBtnState();
   } catch (err) {
     console.error('[promptflow] Local matrix reconstruction failed:', err);

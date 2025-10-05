@@ -7,7 +7,10 @@ const state = {
   outputFeature: null, // {columns: [{tableIndex, columnName}]}
   featureCounter: 0,
   labelMapping: null, // {uniqueValues: [], targetLabels: [{id, name, mappedValues: []}]}
-  labelCounter: 0
+  labelCounter: 0,
+  _lastPersisted: null,
+  _lastPersistedHash: null,
+  _suppressAutoSave: false
 };
 
 // Load training selection from IndexedDB
@@ -667,30 +670,38 @@ function updateProceedButton() {
 // Auto-save feature mapping to database
 async function autoSaveFeatureMapping() {
   try {
-    // Prepare feature mapping configuration
+    if (state._suppressAutoSave) return;
     const validInputs = state.inputFeatures.filter(f => f.mappedColumns.length > 0);
-    
     const featureMapping = {
       inputFeatures: validInputs.map(f => ({
         featureName: (() => { const m = f.id.match(/input_(\d+)/); return `Input Feature ${m ? m[1] : ''}`.trim(); })(),
-        columns: f.mappedColumns.sort((a, b) => a.tableIndex - b.tableIndex)
+        columns: f.mappedColumns.sort((a,b)=>a.tableIndex-b.tableIndex)
       })),
       outputFeature: state.outputFeature || { columns: [] },
       labelMapping: state.labelMapping ? {
-        uniqueValues: Array.isArray(state.labelMapping.uniqueValues) 
-          ? state.labelMapping.uniqueValues 
-          : Array.from(state.labelMapping.uniqueValues || []),
-        targetLabels: state.labelMapping.targetLabels.map((label, index) => ({
+        uniqueValues: Array.isArray(state.labelMapping.uniqueValues) ? state.labelMapping.uniqueValues : Array.from(state.labelMapping.uniqueValues || []),
+        targetLabels: state.labelMapping.targetLabels.map((label,index)=>({
           id: label.id,
           name: label.name,
-          index: index,
-          mappedValues: Array.isArray(label.mappedValues) ? label.mappedValues : []
+          index,
+          mappedValues: Array.isArray(label.mappedValues)? label.mappedValues : []
         }))
       } : null,
-      tableOrder: state.tables.map(t => t.tabName)
+      tableOrder: state.tables.map(t=>t.tabName)
     };
-    
+    if (!featureMapping.labelMapping && state._lastPersisted?.labelMapping) {
+      const prevSig = JSON.stringify(state._lastPersisted.outputFeature?.columns || []);
+      const currSig = JSON.stringify(featureMapping.outputFeature?.columns || []);
+      if (prevSig === currSig) {
+        console.warn('⚠️ Restoring previous labelMapping to prevent unintended wipe');
+        featureMapping.labelMapping = JSON.parse(JSON.stringify(state._lastPersisted.labelMapping));
+      }
+    }
+    const hash = JSON.stringify(featureMapping);
+    if (hash === state._lastPersistedHash) return; // no change
     await dataStore.saveFeatureMapping(featureMapping);
+    state._lastPersisted = featureMapping;
+    state._lastPersistedHash = hash;
     console.log('💾 Auto-saved feature mapping');
   } catch (error) {
     console.error('Error auto-saving feature mapping:', error);
@@ -700,38 +711,22 @@ async function autoSaveFeatureMapping() {
 // Reset mapping
 async function resetMapping() {
   if (!confirm('Reset all feature mappings and label assignments?')) return;
-  
   state.inputFeatures = [];
   state.outputFeature = { columns: [] };
   state.featureCounter = 0;
   state.labelMapping = null;
   state.labelCounter = 0;
-  
-  document.getElementById('inputFeatures').innerHTML = '';
+  state._lastPersisted = null; state._lastPersistedHash = null;
+  document.getElementById('inputFeatures').innerHTML='';
   renderOutputFeature();
-  
-  // Hide label mapping section
   const labelSection = document.getElementById('labelMappingSection');
-  if (labelSection) {
-    labelSection.classList.add('hidden');
-  }
-  
+  if (labelSection) labelSection.classList.add('hidden');
   updateMappingSummary();
   updateProceedButton();
-  
-  // Clear the saved mapping from database
   try {
-    // Save empty mapping to clear it
-    await dataStore.saveFeatureMapping({
-      inputFeatures: [],
-      outputFeature: { columns: [] },
-      labelMapping: null,
-      tableOrder: state.tables.map(t => t.tabName)
-    });
+    await dataStore.saveFeatureMapping({ inputFeatures: [], outputFeature: { columns: [] }, labelMapping: null, tableOrder: state.tables.map(t=>t.tabName) });
     console.log('✅ Feature mapping cleared from database');
-  } catch (error) {
-    console.error('Error clearing feature mapping:', error);
-  }
+  } catch (error) { console.error('Error clearing feature mapping:', error); }
 }
 
 // Proceed to training
@@ -1141,123 +1136,62 @@ async function loadSavedMapping() {
     if (mappingData && mappingData.mapping) {
       const savedMapping = mappingData.mapping;
       console.log('📥 Loading saved feature mapping:', savedMapping);
-      
-      // Restore input features
+      state._lastPersisted = savedMapping;
+      state._lastPersistedHash = JSON.stringify(savedMapping);
       if (savedMapping.inputFeatures && savedMapping.inputFeatures.length > 0) {
-        savedMapping.inputFeatures.forEach((feature, index) => {
+        savedMapping.inputFeatures.forEach(feature => {
           const featureId = `input_${++state.featureCounter}`;
-          
-          state.inputFeatures.push({
-            id: featureId,
-            mappedColumns: feature.columns || []
-          });
-          
+          state.inputFeatures.push({ id: featureId, mappedColumns: feature.columns || [] });
           const container = document.getElementById('inputFeatures');
           const featureBox = document.createElement('div');
           featureBox.className = 'drop-zone border-dashed-gray bg-semi-dark bg-blur-sm p-4 rounded';
           featureBox.dataset.featureType = 'input';
           featureBox.dataset.featureId = featureId;
-          
           const totalTables = state.tables.length;
-          featureBox.innerHTML = `
-            <div class="flex items-center justify-between mb-2">
-              <div class="text-sm font-medium text-gray-300">Input Feature ${state.featureCounter}</div>
-              <button class="remove-feature label-remove-btn" data-feature-id="${featureId}">×</button>
-            </div>
-            <div class="drop-zone-content text-gray-400 text-sm">
-              Drop one column from each table (need ${totalTables} columns total, one per table)
-            </div>
-          `;
-          
+          featureBox.innerHTML = `<div class=\"flex items-center justify-between mb-2\"><div class=\"text-sm font-medium text-gray-300\">Input Feature ${state.featureCounter}</div><button class=\"remove-feature label-remove-btn\" data-feature-id=\"${featureId}\">×</button></div><div class=\"drop-zone-content text-gray-400 text-sm\">Drop one column from each table (need ${totalTables} columns total, one per table)</div>`;
           featureBox.addEventListener('dragover', handleDragOver);
           featureBox.addEventListener('drop', handleDrop);
           featureBox.addEventListener('dragleave', handleDragLeave);
           featureBox.querySelector('.remove-feature').addEventListener('click', () => removeInputFeature(featureId));
-          
           container.appendChild(featureBox);
           renderFeatureContent(featureId);
         });
       }
-      
-      // Restore label mapping FIRST (before rendering output feature)
       if (savedMapping.labelMapping) {
         state.labelMapping = {
           uniqueValues: savedMapping.labelMapping.uniqueValues || [],
-          targetLabels: savedMapping.labelMapping.targetLabels.map(label => ({
-            id: label.id,
-            name: label.name,
-            mappedValues: label.mappedValues || []
-          }))
+          targetLabels: savedMapping.labelMapping.targetLabels.map(l => ({ id: l.id, name: l.name, mappedValues: l.mappedValues || [] }))
         };
-        
-        // Update label counter to avoid ID conflicts
-        state.labelCounter = Math.max(
-          ...state.labelMapping.targetLabels.map(l => {
-            const match = l.id.match(/label_(\d+)/);
-            return match ? parseInt(match[1]) : 0;
-          }),
-          0
-        );
+        state.labelCounter = Math.max(...state.labelMapping.targetLabels.map(l => { const m = l.id.match(/label_(\d+)/); return m? parseInt(m[1]):0;}),0);
       }
-      
-      // Restore output feature (after label mapping is set)
       if (savedMapping.outputFeature && savedMapping.outputFeature.columns) {
-        state.outputFeature = {
-          columns: savedMapping.outputFeature.columns || []
-        };
+        state.outputFeature = { columns: savedMapping.outputFeature.columns || [] };
         renderOutputFeature();
       }
-      
-      // Render label mapping UI if it exists
-      if (state.labelMapping) {
-        renderLabelMapping();
-      }
-      
-      // Refresh available columns to hide assigned ones
+      if (state.labelMapping) renderLabelMapping();
       populateAvailableColumns();
-      
       updateMappingSummary();
       updateProceedButton();
-      
       console.log('✅ Feature mapping restored successfully');
       return true;
     }
-  } catch (error) {
-    console.log('No saved mapping found or error loading:', error.message);
-  }
+  } catch (error) { console.log('No saved mapping found or error loading:', error.message); }
   return false;
 }
 
-// Reload mapping when window regains focus (after visiting other pages)
-window.addEventListener('focus', async () => {
-  console.log('🔄 Window focused, reloading feature mapping...');
-  
-  // Clear current state
-  state.inputFeatures = [];
-  state.outputFeature = { columns: [] };
-  state.featureCounter = 0;
-  state.labelMapping = null;
-  state.labelCounter = 0;
-  
-  // Clear UI
-  document.getElementById('inputFeatures').innerHTML = '';
-  const labelSection = document.getElementById('labelMappingSection');
-  if (labelSection) {
-    labelSection.classList.add('hidden');
-  }
-  
-  // Reload data and mapping
-  const loaded = await loadTrainingData();
-  if (loaded) {
-    const mappingLoaded = await loadSavedMapping();
-    if (!mappingLoaded) {
-      addInputFeature();
-    }
-  }
-  
-  updateMappingSummary();
-  updateProceedButton();
-});
+window.repairSingleTableFeatures = function(cols){
+  if(!Array.isArray(cols)||!cols.length){console.error('repairSingleTableFeatures requires column array');return;}
+  if(!state.tables.length){console.error('No tables loaded');return;}
+  state._suppressAutoSave=true;
+  try{
+    state.inputFeatures=[];state.featureCounter=0;
+    cols.forEach(c=>{state.featureCounter++;state.inputFeatures.push({id:`input_${state.featureCounter}`,mappedColumns:[{tableIndex:0,columnName:c,tableName:state.tables[0].tabName}]});});
+    const container=document.getElementById('inputFeatures');container.innerHTML='';
+    state.inputFeatures.forEach(f=>{const box=document.createElement('div');box.className='drop-zone border-dashed-gray bg-semi-dark bg-blur-sm p-4 rounded filled';box.dataset.featureType='input';box.dataset.featureId=f.id;box.innerHTML=`<div class=\"flex items-center justify-between mb-2\"><div class=\"text-sm font-medium text-gray-300\">${f.id.replace('input_','Input Feature ')}</div><button class=\"remove-feature label-remove-btn\" data-feature-id=\"${f.id}\">×</button></div><div class=\"drop-zone-content text-gray-400 text-sm\"></div>`;box.addEventListener('dragover',handleDragOver);box.addEventListener('drop',handleDrop);box.addEventListener('dragleave',handleDragLeave);box.querySelector('.remove-feature').addEventListener('click',()=>removeInputFeature(f.id));container.appendChild(box);renderFeatureContent(f.id);});
+    populateAvailableColumns();updateMappingSummary();
+  }finally{state._suppressAutoSave=false;autoSaveFeatureMapping();}
+  console.log('🛠️ repairSingleTableFeatures restored',cols.length,'features');
+};
 
 // Initialize
 (async () => {

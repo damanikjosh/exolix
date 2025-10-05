@@ -198,6 +198,69 @@ function getAssetUrl(path) {
 
 // Presets for common datasets (extended with TESS + combined Kepler+TESS)
 const PRESETS = {
+  k2: {
+    name: 'K2 Planet Archive 2025',
+    get url() { return getAssetUrl('data/k2pandc_2025.10.04_20.57.37.csv'); },
+    datasetId: 'k2_2025',
+    // LLM-only classification prompt (single-token output 0/1)
+    promptTemplate: `You are a K2 mission exoplanet vetting assistant. Classify each candidate using the substituted numeric + mixed context values below. Output only a single token label: 0 = FALSE POSITIVE, 1 = CANDIDATE.
+
+Feature facts (values already substituted):
+Orbital period (days) is {{0}}.
+Semi-major axis (au) is {{1}}.
+Planet radius (Earth radii) is {{2}}.
+Planet mass (Earth masses) is {{3}}.
+Orbital eccentricity is {{4}}.
+Insolation flux (Earth units) is {{5}}.
+Equilibrium temperature (K) is {{6}}.
+Stellar effective temperature (K) is {{7}}.
+Stellar radius (Solar radii) is {{8}}.
+Stellar mass (Solar masses) is {{9}}.
+Stellar metallicity [dex] is {{10}}.
+Stellar surface gravity log10(cm/s^2) is {{11}}.
+Right ascension (deg) is {{12}}.
+Declination (deg) is {{13}}.
+System distance (pc) is {{14}}.
+V magnitude is {{15}}.
+Ks magnitude is {{16}}.
+Gaia magnitude is {{17}}.
+
+Label mapping:
+0 = FALSE POSITIVE
+1 = CANDIDATE or CONFIRMED
+
+Task: Output ONLY 0 or 1. No punctuation, no extra text.`,
+    // For auto-setup we include predominantly numeric / continuous features suited for model input.
+    // Mixed text columns are intentionally excluded here (prompt will rely on numeric subset only).
+    autoSetup: {
+      featureColumns: [
+        'pl_orbper',      // 0 Orbital Period
+        'pl_orbsmax',     // 1 Semi-major axis
+        'pl_rade',        // 2 Planet radius (Earth)
+        'pl_bmasse',      // 3 Planet mass (Earth masses)
+        'pl_orbeccen',    // 4 Eccentricity
+        'pl_insol',       // 5 Insolation flux
+        'pl_eqt',         // 6 Equilibrium temperature
+        'st_teff',        // 7 Stellar Teff
+        'st_rad',         // 8 Stellar radius
+        'st_mass',        // 9 Stellar mass
+        'st_met',         // 10 Metallicity
+        'st_logg',        // 11 Surface gravity
+        'ra',             // 12 RA
+        'dec',            // 13 Dec
+        'sy_dist',        // 14 Distance
+        'sy_vmag',        // 15 V mag
+        'sy_kmag',        // 16 Ks mag
+        'sy_gaiamag'      // 17 Gaia mag
+      ],
+      labelColumn: 'disposition',
+      labelGroups: [
+        { name: 'CANDIDATE', values: ['CANDIDATE','CONFIRMED'] },
+        { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE'] }
+      ],
+      llmOnly: true // custom flag to optionally enforce embedding mode
+    }
+  },
   kepler: {
     name: 'Kepler Object of Interest 2025',
     get url() { return getAssetUrl('data/cumulative_2025.09.29_21.37.15.csv'); },
@@ -1443,6 +1506,53 @@ if (combinedBtn) {
     } catch (error) {
       console.error('Error handling combined preset:', error);
       alert('Error loading Combined preset: ' + error.message);
+    }
+  });
+}
+
+// K2 Preset Button Handler (LLM-only)
+const k2Btn = document.getElementById('k2PresetBtn');
+if (k2Btn) {
+  k2Btn.addEventListener('click', async () => {
+    try {
+      const preset = PRESETS.k2;
+      if (!preset) { alert('K2 preset config missing'); return; }
+      applyPresetPrompt('k2');
+      // Close modal immediately
+      const modal = document.getElementById('addTableModal');
+      if (modal) modal.classList.add('hidden');
+      console.log('🔭 K2 preset selected - loading data...');
+      const datasetId = `dataset_${Date.now()}`;
+      const tableId = await addTable(preset.name, preset.url, datasetId, null);
+      // Re-apply prompt defensively
+      applyPresetPrompt('k2');
+      // Auto-select all rows & run auto-setup
+      if (tableId && preset.autoSetup) {
+        const table = state.tables.find(t => t.id === tableId);
+        if (table && table.gridApi) {
+          table.gridApi.selectAll();
+          updateSelectionCount(tableId);
+          updateTotalSelectionCount();
+          setTimeout(async () => {
+            await sendToTrainingWithAutoSetup('k2', preset.autoSetup);
+          }, 100);
+        }
+      }
+      // Enforce llmOnly training mode if user previously set raw mode
+      if (preset.autoSetup?.llmOnly) {
+        const currentMode = getTrainingMode();
+        if (currentMode !== '1') {
+          try { localStorage.setItem(TRAIN_MODE_KEY, '1'); } catch {}
+          console.log('[explorer] 🚧 Forced training mode to LLM embedding for K2 preset');
+          // Optional user notification
+          setTimeout(() => {
+            alert('K2 preset requires LLM embedding mode. Training mode switched to LLM embeddings.');
+          }, 400);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading K2 preset:', error);
+      alert('Error loading K2 preset: ' + error.message);
     }
   });
 }
