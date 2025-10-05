@@ -8,9 +8,7 @@ let trainingData = [];
 let featureMapping = null;
 let extractedFeatures = null;
 let model = null;
-let inputMode = null; // set after user chooses raw or embedding
-let embeddingMatrix = null; // N x E from LLM
-let embeddingMeta = null; // { rows, dims, prompt }
+// Input mode & embedding state now managed externally (promptflow.js)
 
 // Load training data from IndexedDB (multi-table approach)
 async function loadTrainingData() {
@@ -550,15 +548,25 @@ async function trainModel(features, config, statusContainer) {
   
   // Prepare tensors (NO normalization - like old implementation)
   statusContainer.innerHTML = '<p class="status-info">📊 Preparing training data...</p>';
-  // If embedding mode active, substitute features.inputs with embedding matrix
+  // Resolve external embedding if mode selected (delegated to promptflow.js)
   let workingFeatures = features;
-  if (inputMode === 'llm-embedding' && embeddingMatrix && Array.isArray(embeddingMatrix) && embeddingMatrix.length) {
-    console.log('[training] Using LLM embedding matrix for training');
-    // Clone shallow and override inputs & inputDimension
-    workingFeatures = { ...features, inputs: embeddingMatrix, inputDimension: embeddingMatrix[0].length };
-    console.log('[training] Embedding stats rows=', embeddingMatrix.length, 'dims=', embeddingMatrix[0].length);
-  } else if (inputMode === 'llm-embedding') {
-    throw new Error('Input mode set to LLM embedding but no embedding matrix present. Generate embeddings first.');
+  try {
+    const modeGetter = window.getTrainingInputMode;
+    const embGetter = window.getLLMEmbedding;
+    const selectedMode = typeof modeGetter === 'function' ? modeGetter() : 'raw';
+    if (selectedMode === 'llm-embedding') {
+      const emb = typeof embGetter === 'function' ? embGetter() : null;
+      if (emb && Array.isArray(emb) && emb.length && Array.isArray(emb[0])) {
+        console.log('[training] Using external embedding matrix for training');
+        workingFeatures = { ...features, inputs: emb, inputDimension: emb[0].length };
+        console.log('[training] Embedding stats rows=', emb.length, 'dims=', emb[0].length);
+      } else {
+        throw new Error('Embedding mode selected but no embedding available. Generate embedding first.');
+      }
+    }
+  } catch (e) {
+    console.warn('[training] Embedding resolution warning:', e.message);
+    if (/Embedding mode selected/.test(e.message)) throw e; // escalate fatal condition
   }
 
   const { xData, yData, validCount } = prepareTensors(workingFeatures);
@@ -574,11 +582,11 @@ async function trainModel(features, config, statusContainer) {
   // Build model
   statusContainer.innerHTML = '<p class="status-info">🏗️ Building neural network...</p>';
   
-  if (inputMode === 'llm-embedding' && xTrain.shape[1] !== workingFeatures.inputDimension) {
+  if (xTrain.shape[1] !== workingFeatures.inputDimension) {
     console.warn('[training] Dimension mismatch: tensor dim', xTrain.shape[1], 'metadata dim', workingFeatures.inputDimension);
   }
-  const model = buildModel(xTrain.shape[1], workingFeatures.outputDimension, inputMode);
-  console.log('[training] Legacy model (1024->64->8) firstLayer=', model.layers[0].units, 'inputDim=', xTrain.shape[1], 'mode=', inputMode);
+  const model = buildModel(xTrain.shape[1], workingFeatures.outputDimension, 'unified');
+  console.log('[training] Legacy model (1024->64->8) firstLayer=', model.layers[0].units, 'inputDim=', xTrain.shape[1]);
   
   model.summary();
   
@@ -735,16 +743,38 @@ window.saveModelLocally = async function() {
     alert('No model to save. Please train a model first.');
     return;
   }
-  
-  try {
-    await model.save('localstorage://exolix-model');
-    alert('✅ Model saved to browser local storage!');
-    console.log('Model saved to localstorage://exolix-model');
-  } catch (error) {
-    console.error('Error saving model:', error);
-    alert('❌ Error saving model: ' + error.message);
-  }
+  await attemptModelSave(model, true);
 };
+
+// Robust save helper: prefers IndexedDB (larger quota) then falls back to localStorage, then downloads
+async function attemptModelSave(m, showAlerts = false) {
+  const tried = [];
+  // Try indexeddb first (better for larger models)
+  try {
+    await m.save('indexeddb://exolix-model');
+    console.log('💾 Model saved to indexeddb://exolix-model');
+    if (showAlerts) alert('✅ Model saved (IndexedDB).');
+    return 'indexeddb://exolix-model';
+  } catch (e) { tried.push({ target: 'indexeddb', error: e.message }); }
+  // Fallback: localStorage (may hit quota with large embeddings)
+  try {
+    await m.save('localstorage://exolix-model');
+    console.log('💾 Model saved to localstorage://exolix-model');
+    if (showAlerts) alert('✅ Model saved (localStorage).');
+    return 'localstorage://exolix-model';
+  } catch (e) { tried.push({ target: 'localstorage', error: e.message }); }
+  // Final fallback: force download so user does not lose result
+  try {
+    await m.save('downloads://exolix-model');
+    console.warn('⚠️ Falling back to download. IndexedDB & localStorage failed.', tried);
+    if (showAlerts) alert('⚠️ Storage quota exceeded. Model downloaded instead.');
+    return 'downloads://exolix-model';
+  } catch (e) {
+    console.error('❌ All model save attempts failed', tried, e);
+    if (showAlerts) alert('❌ Failed to save model anywhere: ' + e.message);
+    return null;
+  }
+}
 
 // Start training with TensorFlow.js
 document.getElementById('startTraining').addEventListener('click', async () => {
@@ -802,8 +832,12 @@ document.getElementById('startTraining').addEventListener('click', async () => {
     }
     // Auto-save model to local storage
     try {
-      await model.save('localstorage://exolix-model');
-      console.log('✅ Model auto-saved to localstorage://exolix-model');
+      const target = await attemptModelSave(model, false);
+      if (target) {
+        console.log('✅ Model auto-saved to', target);
+      } else {
+        console.warn('⚠️ Model auto-save failed (all targets).');
+      }
     } catch (e) {
       console.error('Auto-save failed:', e);
     }
@@ -917,70 +951,141 @@ function downloadAsCSV() {
   const loadResult = await loadTrainingData();
   displayDataInfo(loadResult);
 
-  // Large mode selection buttons
+  // Large mode selection buttons wiring (integrates with promptflow public API)
   const inputModeCard = document.getElementById('inputModeCard');
-  const startBtn = document.getElementById('startTraining');
   const promptCard = document.getElementById('promptBuilderCard');
+  const startBtn = document.getElementById('startTraining');
   const configCard = document.getElementById('trainingConfigCard');
-  function revealStartIfReady() {
-    if (inputMode === 'raw') {
-      startBtn.classList.remove('hidden');
+  const changeModeBtn = document.getElementById('changeModeBtn');
+  const modeStatusBar = document.getElementById('modeStatusBar');
+  const modeStatusPanel = document.getElementById('modeStatusPanel');
+  const modeStatusIcon = document.getElementById('modeStatusIcon');
+  const modeStatusTitle = document.getElementById('modeStatusTitle');
+  const modeStatusSubtitle = document.getElementById('modeStatusSubtitle');
+  function setModeStatus(mode, hasEmbedding) {
+    if (!modeStatusPanel) return;
+    // Reset base classes then apply variant accent
+    modeStatusPanel.className = 'flex flex-1 items-center gap-4 rounded-lg border px-4 py-3 shadow-inner backdrop-blur-sm transition-colors';
+    modeStatusPanel.classList.add('border-gray-700/70','bg-gray-800/50');
+    let iconText = '--';
+    let iconClasses = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-sm font-semibold tracking-wide select-none';
+    let panelAccent = '';
+    if (mode === 'raw') {
+      iconText = 'RAW';
+      iconClasses += ' bg-blue-600/25 text-blue-300 border border-blue-600/40';
+      panelAccent = 'ring-1 ring-inset ring-blue-600/30';
+      modeStatusTitle.textContent = 'Raw Feature Mode';
+      modeStatusSubtitle.innerHTML = 'Using engineered numeric feature matrix.';
+    } else if (mode === 'llm-embedding') {
+      iconText = 'LLM';
+      const stateColor = hasEmbedding ? 'green' : 'amber';
+      iconClasses += hasEmbedding
+        ? ' bg-purple-600/25 text-purple-300 border border-purple-600/40'
+        : ' bg-purple-600/15 text-purple-200 border border-purple-600/30';
+      panelAccent = hasEmbedding ? 'ring-1 ring-inset ring-purple-600/30' : 'ring-1 ring-inset ring-purple-500/20';
+      modeStatusTitle.textContent = 'LLM Embedding Mode';
+      modeStatusSubtitle.innerHTML = hasEmbedding
+        ? '<span class="text-green-300">Embedding ready</span> • Train when configuration is set.'
+        : '<span class="text-amber-300">Awaiting embedding</span> • Generate embedding before training.';
+    } else {
+      iconText = '--';
+      iconClasses += ' bg-gray-700 text-gray-300';
+      modeStatusTitle.textContent = 'Training Mode';
+      modeStatusSubtitle.textContent = 'Select a mode below to begin.';
+    }
+    modeStatusIcon.textContent = iconText;
+    modeStatusIcon.className = iconClasses;
+    if (panelAccent) modeStatusPanel.classList.add(...panelAccent.split(' '));
+  }
+  function revealStartAndConfig(mode) {
+    if (mode === 'raw') {
+      startBtn?.classList.remove('hidden');
       configCard?.classList.remove('hidden');
-    } else if (inputMode === 'llm-embedding' && embeddingMatrix) {
-      startBtn.classList.remove('hidden');
-      configCard?.classList.remove('hidden');
+    } else if (mode === 'llm-embedding') {
+      // Only show start after embeddingReady event
+      const emb = typeof window.getLLMEmbedding === 'function' ? window.getLLMEmbedding() : null;
+      if (emb && Array.isArray(emb) && emb.length) {
+        startBtn?.classList.remove('hidden');
+        configCard?.classList.remove('hidden');
+      }
     }
   }
   const rawBtn = document.getElementById('chooseRawMode');
   const embBtn = document.getElementById('chooseEmbeddingMode');
   rawBtn?.addEventListener('click', () => {
-    inputMode = 'raw';
+    if (typeof window.setTrainingInputMode === 'function') window.setTrainingInputMode('raw');
     inputModeCard?.classList.add('hidden');
     promptCard?.classList.add('hidden');
-    revealStartIfReady();
+    revealStartAndConfig('raw');
+    changeModeBtn?.classList.remove('hidden');
+    modeStatusBar?.classList.remove('hidden');
+    setModeStatus('raw', false);
   });
   embBtn?.addEventListener('click', () => {
-    inputMode = 'llm-embedding';
+    if (typeof window.setTrainingInputMode === 'function') window.setTrainingInputMode('llm-embedding');
     inputModeCard?.classList.add('hidden');
     promptCard?.classList.remove('hidden');
-    // Start button only after embedding generated
+    // Wait for embedding-ready event to show start
+    changeModeBtn?.classList.remove('hidden');
+    modeStatusBar?.classList.remove('hidden');
+    setModeStatus('llm-embedding', false);
   });
-})();
-
-// Allow promptflow.js (or future embedding UI) to inject embedding result
-window.__setLLMEmbedding = function(payload) {
-  try {
-    if (!payload) return;
-    const emb = payload.embedding || payload.data || payload.emb;
-    if (Array.isArray(emb) && emb.length && Array.isArray(emb[0])) {
-      embeddingMatrix = emb;
-      embeddingMeta = { rows: emb.length, dims: emb[0].length, receivedAt: Date.now() };
-      console.log('[training] ✅ LLM embedding stored', embeddingMeta);
-      const sumEl = document.getElementById('llmEmbeddingSummary');
-      if (sumEl) {
-        sumEl.classList.remove('hidden');
-        sumEl.textContent = `Embedding ready: ${embeddingMeta.rows} rows × ${embeddingMeta.dims} dims. Training will use this instead of raw features.`;
-      }
-      // Reveal start training after embedding ready
-      const startBtn = document.getElementById('startTraining');
-      if (startBtn) startBtn.classList.remove('hidden');
-      const configCard = document.getElementById('trainingConfigCard');
-      if (configCard) configCard.classList.remove('hidden');
-    } else {
-      console.warn('[training] Invalid embedding payload shape');
+  // React to embedding ready / cleared
+  document.addEventListener('exolix:embedding-ready', () => {
+    if (typeof window.getTrainingInputMode === 'function' && window.getTrainingInputMode() === 'llm-embedding') {
+      startBtn?.classList.remove('hidden');
+      configCard?.classList.remove('hidden');
+      setModeStatus('llm-embedding', true);
     }
-  } catch (e) {
-    console.error('[training] Failed to set embedding', e);
-  }
-};
-
-// Allow prompt builder reset to clear embedding & hide start button if embedding mode
-window.__clearLLMEmbedding = function() {
-  if (inputMode === 'llm-embedding') {
-    embeddingMatrix = null;
-    const startBtn = document.getElementById('startTraining');
-    if (startBtn) startBtn.classList.add('hidden');
-    const sumEl = document.getElementById('llmEmbeddingSummary');
-    if (sumEl) sumEl.classList.add('hidden');
-  }
-};
+  });
+  document.addEventListener('exolix:embedding-cleared', () => {
+    if (typeof window.getTrainingInputMode === 'function' && window.getTrainingInputMode() === 'llm-embedding') {
+      startBtn?.classList.add('hidden');
+      setModeStatus('llm-embedding', false);
+    }
+  });
+  // Change mode handler
+  changeModeBtn?.addEventListener('click', () => {
+    try { localStorage.removeItem('exolix.train.mode.v1'); } catch {}
+    // Clear embedding if we were in embedding mode to avoid stale dimension mismatch
+    if (typeof window.getTrainingInputMode === 'function' && window.getTrainingInputMode() === 'llm-embedding') {
+      if (typeof window.clearLLMEmbedding === 'function') window.clearLLMEmbedding();
+    }
+    // Reset visible sections
+    startBtn?.classList.add('hidden');
+    configCard?.classList.add('hidden');
+    promptCard?.classList.add('hidden');
+    inputModeCard?.classList.remove('hidden');
+    // Keep the button visible so user knows they can cancel again? UX choice: hide to mimic first load.
+    changeModeBtn?.classList.add('hidden');
+  modeStatusBar?.classList.add('hidden');
+  setModeStatus(null, false);
+  });
+  // Apply persisted mode if any (after wiring)
+  try {
+    // Only auto-hide chooser if a mode was actually persisted (key exists).
+    let persistedMode = null;
+    let stored = null;
+    try { stored = localStorage.getItem('exolix.train.mode.v1'); } catch {}
+    if (stored === '0') persistedMode = 'raw';
+    else if (stored === '1') persistedMode = 'llm-embedding';
+    if (persistedMode === 'raw') {
+      inputModeCard?.classList.add('hidden');
+      promptCard?.classList.add('hidden');
+      if (typeof window.setTrainingInputMode === 'function') window.setTrainingInputMode('raw');
+      revealStartAndConfig('raw');
+      changeModeBtn?.classList.remove('hidden');
+      modeStatusBar?.classList.remove('hidden');
+  setModeStatus('raw', false);
+    } else if (persistedMode === 'llm-embedding') {
+      inputModeCard?.classList.add('hidden');
+      promptCard?.classList.remove('hidden');
+      if (typeof window.setTrainingInputMode === 'function') window.setTrainingInputMode('llm-embedding');
+      const emb = typeof window.getLLMEmbedding === 'function' ? window.getLLMEmbedding() : null;
+      if (emb && emb.length) revealStartAndConfig('llm-embedding');
+      changeModeBtn?.classList.remove('hidden');
+      modeStatusBar?.classList.remove('hidden');
+  setModeStatus('llm-embedding', !!(emb && emb.length));
+    }
+  } catch {}
+})();

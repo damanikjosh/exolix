@@ -13,8 +13,28 @@ const state = {
   featureMapping: null, // Will be loaded from dataStore
   model: null, // Cached loaded TFJS model
   modelAvailable: false, // Whether saved model exists
+  modelStorageUrl: null, // Chosen storage URL for loaded model (indexeddb preferred)
   labelNames: [] // Ordered label names from mapping
 };
+
+// Persistence / integration keys (mirrors promptflow & training)
+const TRAIN_MODE_KEY = 'exolix.train.mode.v1'; // '0' raw, '1' llm embedding
+const PROMPT_STORAGE_KEY = 'exolix.prompt.template.v1';
+const ENCODER_URL = 'https://api.exolix.club/encode';
+let embeddingStatusEl = null; // ephemeral UI element for embedding prediction status
+
+// Helpers for mode & prompt
+function getTrainingMode() {
+  try { return localStorage.getItem(TRAIN_MODE_KEY) || '0'; } catch { return '0'; }
+}
+function getSavedPromptTemplate() {
+  try { return localStorage.getItem(PROMPT_STORAGE_KEY) || ''; } catch { return ''; }
+}
+function buildDefaultTemplate(featureCount) {
+  if (!featureCount) return 'Row with feature {{0}}.';
+  const parts = Array.from({ length: featureCount }, (_, i) => `f${i}={{${i}}}`);
+  return `Generate an embedding for exoplanet observation with ${parts.join(', ')}.`;
+}
 
 // Load feature mapping from database
 async function loadFeatureMapping() {
@@ -179,16 +199,29 @@ function ensurePredictionColumn(table) {
   }
 }
 
-// Detect if saved model exists in localstorage
+// Detect if saved model exists (prefer IndexedDB, fallback localStorage)
 async function detectModel() {
   try {
-    // Dynamic import to avoid loading tfjs until needed if not already present
     const tf = await import('@tensorflow/tfjs');
     await tf.ready();
     const models = await tf.io.listModels();
-    state.modelAvailable = Object.keys(models).includes('localstorage://exolix-model');
+    // Preferred new storage
+    if (models['indexeddb://exolix-model']) {
+      state.modelAvailable = true;
+      state.modelStorageUrl = 'indexeddb://exolix-model';
+    } else if (models['localstorage://exolix-model']) { // Legacy fallback
+      state.modelAvailable = true;
+      state.modelStorageUrl = 'localstorage://exolix-model';
+    } else {
+      state.modelAvailable = false; state.modelStorageUrl = null;
+    }
     const btn = document.getElementById('predictWithModel');
     if (btn) btn.disabled = !state.modelAvailable;
+    if (state.modelAvailable) {
+      console.log(`[explorer] ✅ Found trained model at ${state.modelStorageUrl}`);
+    } else {
+      console.log('[explorer] ℹ️ No trained model found yet');
+    }
   } catch (e) {
     console.warn('Model detection failed:', e);
   }
@@ -197,10 +230,11 @@ async function detectModel() {
 // Load model (cached)
 async function loadModelIfNeeded() {
   if (state.model) return state.model;
-  if (!state.modelAvailable) return null;
+  if (!state.modelAvailable || !state.modelStorageUrl) return null;
   const tf = await import('@tensorflow/tfjs');
   await tf.ready();
-  state.model = await tf.loadLayersModel('localstorage://exolix-model');
+  console.log('[explorer] Loading model from', state.modelStorageUrl);
+  state.model = await tf.loadLayersModel(state.modelStorageUrl);
   return state.model;
 }
 
@@ -223,62 +257,116 @@ function buildFeatureVectorForRow(row, tableName) {
   return values;
 }
 
-// Run predictions for the active table
+// RAW vector prediction path (mode 0)
+async function runPredictionsRaw(table, selectedRows) {
+  const model = await loadModelIfNeeded();
+  if (!model) { throw new Error('Failed to load model'); }
+  const tf = await import('@tensorflow/tfjs'); await tf.ready();
+  const featureCount = state.featureMapping.inputFeatures.length;
+  const batchSize = 512;
+  for (let i = 0; i < selectedRows.length; i += batchSize) {
+    const batchRows = selectedRows.slice(i, i + batchSize);
+    const matrix = batchRows.map(r => buildFeatureVectorForRow(r, table.name));
+    const tensor = tf.tensor2d(matrix, [matrix.length, featureCount]);
+    const preds = model.predict(tensor);
+    const predIndices = preds.argMax(-1).dataSync();
+    batchRows.forEach((r, idx) => {
+      const labelIndex = predIndices[idx];
+      r.__prediction = (state.labelNames && state.labelNames[labelIndex] !== undefined)
+        ? state.labelNames[labelIndex]
+        : `Class ${labelIndex}`;
+    });
+    tf.dispose([tensor, preds]);
+  }
+}
+
+// EMBEDDING path (mode 1): generate on-the-fly embedding via /encode then predict
+async function runPredictionsEmbedding(table, selectedRows) {
+  const featureCount = state.featureMapping.inputFeatures.length;
+  // Build raw numeric matrix
+  const rawMatrix = selectedRows.map(r => buildFeatureVectorForRow(r, table.name));
+  // Validate numeric
+  if (!rawMatrix.every(row => Array.isArray(row) && row.length === featureCount)) {
+    throw new Error('Invalid feature vectors for embedding');
+  }
+  // Prompt
+  let prompt = getSavedPromptTemplate().trim();
+  if (!prompt) prompt = buildDefaultTemplate(featureCount);
+  // Provide visible status feedback
+  if (!embeddingStatusEl) {
+    embeddingStatusEl = document.createElement('div');
+    embeddingStatusEl.className = 'fixed bottom-4 right-4 z-50 px-4 py-3 rounded bg-indigo-900/90 text-indigo-200 text-sm shadow-lg border border-indigo-700';
+    document.body.appendChild(embeddingStatusEl);
+  }
+  function setEmbedStatus(txt) { if (embeddingStatusEl) embeddingStatusEl.textContent = txt; }
+  setEmbedStatus('Embedding: preparing matrix…');
+  console.log('[explorer] 🔁 (EMBED) Starting embedding inference path');
+  console.log('[explorer] (EMBED) Rows:', rawMatrix.length, 'Features:', featureCount, 'Prompt chars:', prompt.length);
+  // POST to encoder
+  console.log('[explorer] (EMBED) POST', ENCODER_URL);
+  setEmbedStatus('Embedding: contacting encoder…');
+  const res = await fetch(ENCODER_URL, {
+    method: 'POST',
+    mode: 'cors',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, data: rawMatrix })
+  });
+  console.log('[explorer] (EMBED) Response status:', res.status);
+  if (!res.ok) { setEmbedStatus('Embedding failed: HTTP ' + res.status); throw new Error('Encoder HTTP ' + res.status); }
+  const payload = await res.json().catch(() => ({}));
+  const emb = payload && payload.embedding;
+  if (!Array.isArray(emb) || !emb.length || !Array.isArray(emb[0])) {
+    setEmbedStatus('Embedding failed: bad payload');
+    throw new Error('Encoder response missing embedding matrix');
+  }
+  if (emb.length !== selectedRows.length) {
+    console.warn('[explorer] Embedding row count mismatch', emb.length, 'vs selected', selectedRows.length);
+  }
+  const model = await loadModelIfNeeded();
+  if (!model) throw new Error('Failed to load model');
+  const tf = await import('@tensorflow/tfjs'); await tf.ready();
+  const dims = emb[0].length;
+  console.log(`[explorer] ✅ (EMBED) Received embedding ${emb.length} × ${dims}. Predicting...`);
+  setEmbedStatus('Embedding received. Predicting…');
+  const tensor = tf.tensor2d(emb, [emb.length, dims]);
+  const preds = model.predict(tensor);
+  const predIndices = preds.argMax(-1).dataSync();
+  selectedRows.forEach((r, idx) => {
+    const labelIndex = predIndices[idx];
+    r.__prediction = (state.labelNames && state.labelNames[labelIndex] !== undefined)
+      ? state.labelNames[labelIndex]
+      : `Class ${labelIndex}`;
+  });
+  tf.dispose([tensor, preds]);
+  setEmbedStatus('Predictions complete ✓');
+  setTimeout(() => { if (embeddingStatusEl) embeddingStatusEl.remove(); embeddingStatusEl = null; }, 3500);
+}
+
+// Decide prediction path based on saved training mode
 async function runPredictions() {
   const btn = document.getElementById('predictWithModel');
   if (btn) btn.disabled = true;
   try {
-    if (!state.modelAvailable) {
-      alert('No trained model found. Train a model first.');
-      return;
-    }
+    if (!state.modelAvailable) { alert('No trained model found. Train a model first.'); return; }
     const table = state.tables.find(t => t.id === state.activeTableId);
-    if (!table) {
-      alert('No active table');
-      return;
-    }
-    if (!state.featureMapping || !state.featureMapping.inputFeatures.length) {
-      alert('No feature mapping found. Define features and train first.');
-      return;
-    }
-    // Ensure prediction column present
+    if (!table) { alert('No active table'); return; }
+    if (!state.featureMapping || !state.featureMapping.inputFeatures.length) { alert('No feature mapping found.'); return; }
+    const selectedRows = table.gridApi.getSelectedRows();
+    if (!selectedRows || !selectedRows.length) { alert('No rows selected for prediction.'); return; }
     ensurePredictionColumn(table);
-    // Load model
-    const model = await loadModelIfNeeded();
-    if (!model) {
-      alert('Failed to load model');
-      return;
+    const mode = getTrainingMode();
+    console.log(`[explorer] 🔮 Predicting on ${selectedRows.length} row(s) using mode=${mode === '1' ? 'LLM embedding' : 'RAW'} modelStorage=${state.modelStorageUrl}`);
+    if (mode === '1') {
+      await runPredictionsEmbedding(table, selectedRows);
+    } else {
+      await runPredictionsRaw(table, selectedRows);
     }
-    const tf = await import('@tensorflow/tfjs');
-    await tf.ready();
-    const rows = table.data;
-    const featureCount = state.featureMapping.inputFeatures.length;
-    // Batch process
-    const batchSize = 512;
-    for (let i = 0; i < rows.length; i += batchSize) {
-      const batchRows = rows.slice(i, i + batchSize);
-      const matrix = batchRows.map(r => buildFeatureVectorForRow(r, table.name));
-      const tensor = tf.tensor2d(matrix, [matrix.length, featureCount]);
-      const preds = model.predict(tensor);
-      const predIndices = preds.argMax(-1).dataSync();
-      // Map to label names if available
-      batchRows.forEach((r, idx) => {
-        const labelIndex = predIndices[idx];
-        if (state.labelNames && state.labelNames[labelIndex] !== undefined) {
-            r.__prediction = state.labelNames[labelIndex];
-        } else {
-            r.__prediction = `Class ${labelIndex}`;
-        }
-      });
-      tf.dispose([tensor, preds]);
-    }
-    // Refresh grid rows
-  table.gridApi.refreshCells({ force: true });
+    table.gridApi.refreshCells({ force: true });
   } catch (e) {
     console.error('Prediction error:', e);
     alert('Error running predictions: ' + e.message);
   } finally {
-    if (btn) btn.disabled = !state.modelAvailable; // Re-enable if model exists
+    if (btn) btn.disabled = !state.modelAvailable;
   }
 }
 

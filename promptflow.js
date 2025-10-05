@@ -5,8 +5,20 @@ import dataStore from './dataStore.js';
 const ENCODER_URL = 'https://api.exolix.club/encode';
 // Expected maximum encode time (approx 5 minutes)
 const ENCODER_EXPECTED_MS = 5 * 60 * 1000; // 300000 ms
+const PROMPT_STORAGE_KEY = 'exolix.prompt.template.v1';
+const TRAIN_MODE_KEY = 'exolix.train.mode.v1'; // stores '0' or '1'
 console.log('[promptflow] v16 USING', ENCODER_URL, 'from', import.meta.url);
 
+function savePromptTemplate() {
+  try {
+    const raw = getEditorText().trim();
+    if (raw) localStorage.setItem(PROMPT_STORAGE_KEY, raw);
+    else localStorage.removeItem(PROMPT_STORAGE_KEY);
+  } catch (e) { console.warn('[promptflow] Failed to save prompt template', e); }
+}
+function loadSavedPromptTemplate() {
+  try { return localStorage.getItem(PROMPT_STORAGE_KEY) || ''; } catch { return ''; }
+}
 const $ = (id) => document.getElementById(id);
 const show = (n) => n && n.classList.remove('hidden');
 const hide = (n) => n && n.classList.add('hidden');
@@ -56,9 +68,11 @@ function ensureDefaultPromptInEditor() {
   if (!ed) return;
   const current = (ed.innerText || ed.textContent || '').trim();
   if (!current) {
-    setEditorText(buildDefaultTemplateWithNames());
+    const saved = loadSavedPromptTemplate();
+    if (saved) setEditorText(saved); else setEditorText(buildDefaultTemplateWithNames());
     updatePreview();
     updateSendBtnState();
+    savePromptTemplate();
   }
 }
 
@@ -137,6 +151,30 @@ let mapping = null;
 let featureCount = 0;
 let matrix = []; // samples × features
 let matrixStats = null; // { raw, kept, skippedInvalid, skippedUnmapped }
+let embeddingMatrix = null; // stored embedding result
+let embeddingMeta = null;  // { rows, dims, receivedAt }
+let trainingInputMode = null; // 'raw' | 'llm-embedding'
+
+// Public API for training/explorer integration
+window.setTrainingInputMode = function(mode) {
+  trainingInputMode = mode === 'llm-embedding' ? 'llm-embedding' : 'raw';
+  try { localStorage.setItem(TRAIN_MODE_KEY, trainingInputMode === 'llm-embedding' ? '1' : '0'); } catch {}
+  document.dispatchEvent(new CustomEvent('exolix:input-mode-changed', { detail: { mode: trainingInputMode } }));
+};
+window.getTrainingInputMode = function() {
+  if (trainingInputMode) return trainingInputMode;
+  try {
+    const stored = localStorage.getItem(TRAIN_MODE_KEY);
+    if (stored === '1') trainingInputMode = 'llm-embedding';
+    else if (stored === '0') trainingInputMode = 'raw';
+  } catch {}
+  return trainingInputMode || 'raw';
+};
+window.getLLMEmbedding = function() { return embeddingMatrix; };
+window.clearLLMEmbedding = function() {
+  embeddingMatrix = null; embeddingMeta = null;
+  document.dispatchEvent(new CustomEvent('exolix:embedding-cleared'));
+};
 
 function getMatrixFromTraining() {
   try { const m = window.getMappedFeatureMatrix?.(); return is2D(m) ? m : []; }
@@ -165,6 +203,8 @@ function renderInfoLine() {
       const name = f.featureName || f.name || `Feature ${idx}`;
       pill.textContent = name;
       pill.dataset.featureIndex = idx;
+      // Prevent button from stealing focus so caret stays in editor if it was there
+      pill.addEventListener('mousedown', (e) => { e.preventDefault(); });
       pill.addEventListener('click', () => insertPlaceholderAtCursor(idx));
       pillWrap.appendChild(pill);
     });
@@ -398,6 +438,10 @@ async function sendToEncoder() {
     if (prevWrap && prevBlock && payload && payload.embedding) {
       prevWrap.classList.remove('hidden');
       const emb = payload.embedding;
+      // Persist embedding for external training consumption
+      embeddingMatrix = emb;
+      embeddingMeta = { rows: emb.length, dims: emb[0]?.length || 0, receivedAt: Date.now() };
+      document.dispatchEvent(new CustomEvent('exolix:embedding-ready', { detail: embeddingMeta }));
       const first = emb.slice(0, 3).map(row => row.slice(0, Math.min(8, row.length)));
       prevBlock.textContent = `Rows: ${emb.length}, Dims: ${emb[0].length}\nPreview (first 3 rows × first up to 8 dims):\n` + first.map(r => r.map(v => (typeof v === 'number'? v.toFixed(4): v)).join(', ')).join('\n');
     }
@@ -468,19 +512,22 @@ async function init() {
     ensureDefaultPromptInEditor();
     const editor = $('pbTemplateEditor');
     if (editor) {
-      editor.addEventListener('input', () => { updatePreview(); updateSendBtnState(); });
+      editor.addEventListener('input', () => { updatePreview(); updateSendBtnState(); savePromptTemplate(); });
       editor.addEventListener('blur', () => highlightEditorPlaceholders(true));
     }
     $('pbGenerateEmbedding')?.addEventListener('click', sendToEncoder);
     $('pbClearEmbedding')?.addEventListener('click', () => {
       setEditorText(buildDefaultTemplateWithNames());
-      embeddingMatrix = null;
+  embeddingMatrix = null;
+  embeddingMeta = null;
+  document.dispatchEvent(new CustomEvent('exolix:embedding-cleared'));
       updatePreview(); updateSendBtnState();
       highlightEditorPlaceholders(true);
       const ed = $('pbTemplateEditor'); if (ed) { ed.focus(); selectAllEditor(); }
       const prevWrap = $('pbEmbeddingPreview'); if (prevWrap) prevWrap.classList.add('hidden');
       const summary = $('llmEmbeddingSummary'); if (summary) { summary.classList.add('hidden'); summary.textContent=''; }
       if (typeof window.__clearLLMEmbedding === 'function') { try { window.__clearLLMEmbedding(); } catch {} }
+      savePromptTemplate();
     });
 
   } catch (e) {
@@ -494,11 +541,19 @@ async function init() {
 function insertPlaceholderAtCursor(idx) {
   const ed = $('pbTemplateEditor');
   if (!ed) return;
-  ed.focus();
+  const wasFocused = document.activeElement === ed;
+  if (!wasFocused) {
+    // Append at end if editor not focused (requested behavior)
+    setEditorText(getEditorText() + ` {{${idx}}}`);
+    updatePreview();
+    savePromptTemplate?.();
+    return;
+  }
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) {
     setEditorText(getEditorText() + ` {{${idx}}}`);
     updatePreview();
+    savePromptTemplate?.();
     return;
   }
   const range = sel.getRangeAt(0);
@@ -509,6 +564,7 @@ function insertPlaceholderAtCursor(idx) {
   sel.removeAllRanges();
   sel.addRange(range);
   updatePreview();
+  savePromptTemplate?.();
 }
 
 if (document.readyState === 'loading') {
