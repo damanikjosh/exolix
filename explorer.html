@@ -121,7 +121,7 @@
       <!-- Quick Start Presets -->
       <div class="mb-8">
         <h4 class="text-lg font-medium text-gray-300 mb-4 text-center">🚀 Quick Start with NASA Data</h4>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           <!-- Kepler Button -->
           <button id="keplerPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-purple-500/50">
             <div class="relative z-10">
@@ -140,6 +140,17 @@
               <h5 class="text-xl font-bold text-white mb-2">TESS</h5>
               <p class="text-sm text-orange-100">Object of Interest 2025</p>
               <p class="text-xs text-orange-200 mt-2 opacity-80">Latest exoplanet data</p>
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
+
+          <!-- Combined Kepler + TESS Button -->
+          <button id="combinedPresetBtn" class="group relative overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-xl p-6 transition-all transform hover:scale-105 shadow-lg hover:shadow-emerald-500/50">
+            <div class="relative z-10">
+              <div class="text-5xl mb-3">🧬</div>
+              <h5 class="text-xl font-bold text-white mb-2">Combined</h5>
+              <p class="text-sm text-emerald-100">Kepler + TESS Unified</p>
+              <p class="text-xs text-emerald-200 mt-2 opacity-80">Cross-mapped features & labels</p>
             </div>
             <div class="absolute inset-0 bg-gradient-to-br from-white/0 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
           </button>

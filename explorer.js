@@ -149,15 +149,16 @@ function getAssetUrl(path) {
   return `${window.location.origin}${basePath}/${path}`;
 }
 
-// Presets for common datasets
+// Presets for common datasets (extended with TESS + combined Kepler+TESS)
 const PRESETS = {
   kepler: {
     name: 'Kepler Object of Interest 2025',
     get url() { return getAssetUrl('data/cumulative_2025.09.29_21.37.15.csv'); },
     datasetId: 'koi_2025',
-    // Auto-setup configuration for Kepler preset
     autoSetup: {
       featureColumns: [
+        // Added koi_time0bk (if present) then standard list
+        'koi_time0bk',
         'koi_period',
         'koi_impact',
         'koi_duration',
@@ -173,8 +174,6 @@ const PRESETS = {
         'koi_kepmag'
       ],
       labelColumn: 'koi_disposition',
-      // First step refactor: move label grouping definition into preset config
-      // (semantic equivalent to previous inline candidate/false positive grouping)
       labelGroups: [
         { name: 'CANDIDATE', values: ['CONFIRMED'] },
         { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE'] }
@@ -184,7 +183,52 @@ const PRESETS = {
   tess: {
     name: 'TESS Object of Interest 2025',
     get url() { return getAssetUrl('data/TOI_2025.10.01_18.37.10.csv'); },
-    datasetId: 'toi_2025'
+    datasetId: 'toi_2025',
+    autoSetup: {
+      // Approximate alignment to Kepler feature semantics (missing some)
+      featureColumns: [
+        'pl_orbper',      // ~ koi_period
+        'pl_trandurh',    // ~ koi_duration
+        'pl_trandep',     // ~ koi_depth
+        'pl_rade',        // ~ koi_prad
+        'pl_eqt',         // ~ koi_teq
+        'pl_insol',       // ~ koi_insol
+        'st_teff',        // ~ koi_steff
+        'st_rad',         // ~ koi_srad
+        'ra',
+        'dec'
+        // (koi_impact, koi_slogg, koi_kepmag not directly available)
+      ],
+      labelColumn: 'tfopwg_disp',
+      labelGroups: [
+        { name: 'CANDIDATE', values: ['PC', 'KP'] },
+        { name: 'FALSE POSITIVE', values: ['FP'] }
+      ]
+    }
+  },
+  kepler_tess: {
+    name: 'Kepler + TESS Combined 2025',
+    sources: ['kepler', 'tess'],
+    autoSetup: {
+      // Per-dataset feature name mapping
+      featureMappings: [
+        { kepler: 'koi_period', tess: 'pl_orbper' },
+        { kepler: 'koi_duration', tess: 'pl_trandurh' },
+        { kepler: 'koi_depth', tess: 'pl_trandep' },
+        { kepler: 'koi_prad', tess: 'pl_rade' },
+        { kepler: 'koi_teq', tess: 'pl_eqt' },
+        { kepler: 'koi_insol', tess: 'pl_insol' },
+        { kepler: 'koi_steff', tess: 'st_teff' },
+        { kepler: 'koi_srad', tess: 'st_rad' },
+        { kepler: 'ra', tess: 'ra' },
+        { kepler: 'dec', tess: 'dec' }
+      ],
+      labelColumns: { kepler: 'koi_disposition', tess: 'tfopwg_disp' },
+      labelGroups: [
+        { name: 'CANDIDATE', values: ['CANDIDATE','CONFIRMED','PC','KP'] },
+        { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE','FP'] }
+      ]
+    }
   }
 };
 
@@ -871,19 +915,18 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
   try {
     console.log('🎯 Applying auto-setup feature mapping...');
     
-    // Create feature mapping in the same format as mapping.js
-    // Build base feature mapping
+    // Create feature mapping for simple single-dataset presets (shared feature columns across tables)
     const featureMapping = {
       inputFeatures: autoSetupConfig.featureColumns.map(columnName => ({
         columns: tablesData.map((table, tableIndex) => ({
-          tableIndex: tableIndex,
-          columnName: columnName,
+          tableIndex,
+          columnName,
           tableName: table.tabName
         }))
       })),
       outputFeature: {
         columns: tablesData.map((table, tableIndex) => ({
-          tableIndex: tableIndex,
+          tableIndex,
           columnName: autoSetupConfig.labelColumn,
           tableName: table.tabName
         }))
@@ -892,41 +935,33 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
       tableOrder: tablesData.map(t => t.tabName)
     };
 
-    // Apply Kepler preset label collapsing if kepler
-    if (presetKey === 'kepler') {
+    // Generic label grouping (works for any preset with labelGroups)
+    if (autoSetupConfig && Array.isArray(autoSetupConfig.labelGroups) && autoSetupConfig.labelGroups.length) {
       try {
-        // Collect unique disposition values from first table's selected records (others assumed aligned)
         const rawValuesSet = new Set();
         const labelCol = autoSetupConfig.labelColumn;
         tablesData.forEach(t => {
-          // each t.selectedRecords contains full row objects
           t.selectedRecords.forEach(r => {
             const v = r[labelCol];
-            if (v !== undefined && v !== null && v !== '') {
-              rawValuesSet.add(String(v).trim());
-            }
+            if (v !== undefined && v !== null && v !== '') rawValuesSet.add(String(v).trim());
           });
         });
         const uniqueValues = Array.from(rawValuesSet).sort();
-        // Use preset-defined labelGroups (moved from inline logic)
-        const groups = Array.isArray(autoSetupConfig.labelGroups) ? autoSetupConfig.labelGroups : [];
+        const groups = autoSetupConfig.labelGroups;
         const targetLabels = [];
         let labelCounter = 0;
         groups.forEach(g => {
-          // Only include values actually present in data
-            const present = g.values.filter(v => rawValuesSet.has(v));
-            if (present.length) {
-              targetLabels.push({ id: `label_${++labelCounter}`, name: g.name, mappedValues: present });
-            }
+          const present = g.values.filter(v => rawValuesSet.has(v));
+          if (present.length) targetLabels.push({ id: `label_${++labelCounter}`, name: g.name, mappedValues: present });
         });
         if (targetLabels.length) {
           featureMapping.labelMapping = { uniqueValues, targetLabels };
-          console.log('🪐 Applied Kepler label grouping from preset config:', featureMapping.labelMapping);
+          console.log('� Applied preset label grouping:', { preset: presetKey, labelMapping: featureMapping.labelMapping });
         } else {
-          console.log('⚠️ No preset label groups matched present values. uniqueValues:', uniqueValues);
+          console.log('⚠️ No preset label groups matched present values for preset', presetKey);
         }
       } catch (e) {
-        console.warn('Kepler preset label collapse failed:', e);
+        console.warn('Label grouping failed for preset', presetKey, e);
       }
     }
     
@@ -949,6 +984,96 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
     console.error('❌ Error in auto-setup:', e);
     console.error('Error stack:', e.stack);
     alert('Error in auto-setup: ' + e.message);
+  }
+}
+
+// Specialized combined preset handler (multi-source with differing column names)
+async function sendToTrainingCombined(autoSetupConfig) {
+  console.log('🧬 Auto-setup training for combined Kepler+TESS preset');
+
+  const keplerTable = state.tables.find(t => /Kepler/i.test(t.name));
+  const tessTable = state.tables.find(t => /TESS/i.test(t.name));
+
+  if (!keplerTable || !tessTable) {
+    alert('Both Kepler and TESS tables must be loaded for the combined preset.');
+    return;
+  }
+
+  // Ensure selections (select all if none yet)
+  [keplerTable, tessTable].forEach(table => {
+    if (table.gridApi) {
+      const sel = table.gridApi.getSelectedRows();
+      if (!sel.length) {
+        table.gridApi.selectAll();
+        table.selectedRows = table.gridApi.getSelectedRows();
+      } else {
+        table.selectedRows = sel;
+      }
+    }
+  });
+
+  const tablesData = [keplerTable, tessTable].map((table, index) => ({
+    datasetId: table.datasetId,
+    selectedIds: table.selectedRows.map(r => r.__internalId),
+    selectedRecords: table.selectedRows,
+    columns: table.columns,
+    tabName: table.name,
+    tabOrder: index
+  }));
+
+  try {
+    console.log('🎯 Building unified feature mapping for combined preset...');
+    const featureMapping = {
+      inputFeatures: autoSetupConfig.featureMappings.map(fm => ({
+        columns: tablesData.map((table, tableIndex) => ({
+          tableIndex,
+          columnName: /Kepler/i.test(table.tabName) ? fm.kepler : fm.tess,
+          tableName: table.tabName
+        }))
+      })),
+      outputFeature: {
+        columns: tablesData.map((table, tableIndex) => ({
+          tableIndex,
+          columnName: /Kepler/i.test(table.tabName) ? autoSetupConfig.labelColumns.kepler : autoSetupConfig.labelColumns.tess,
+          tableName: table.tabName
+        }))
+      },
+      labelMapping: null,
+      tableOrder: tablesData.map(t => t.tabName)
+    };
+
+    // Combined label grouping across both datasets
+    const rawValuesSet = new Set();
+    tablesData.forEach(t => {
+      const labelCol = /Kepler/i.test(t.tabName) ? autoSetupConfig.labelColumns.kepler : autoSetupConfig.labelColumns.tess;
+      t.selectedRecords.forEach(r => {
+        const v = r[labelCol];
+        if (v !== undefined && v !== null && v !== '') rawValuesSet.add(String(v).trim());
+      });
+    });
+    const uniqueValues = Array.from(rawValuesSet).sort();
+    const groups = Array.isArray(autoSetupConfig.labelGroups) ? autoSetupConfig.labelGroups : [];
+    const targetLabels = [];
+    let labelCounter = 0;
+    groups.forEach(g => {
+      const present = g.values.filter(v => rawValuesSet.has(v));
+      if (present.length) targetLabels.push({ id: `label_${++labelCounter}`, name: g.name, mappedValues: present });
+    });
+    if (targetLabels.length) {
+      featureMapping.labelMapping = { uniqueValues, targetLabels };
+      console.log('🧩 Applied combined preset label grouping:', featureMapping.labelMapping);
+    } else {
+      console.log('⚠️ No combined label groups matched any values. uniqueValues:', uniqueValues);
+    }
+
+    console.log(`✅ Unified mapping: ${featureMapping.inputFeatures.length} features across 2 tables`);
+    await dataStore.saveFeatureMapping(featureMapping);
+    await dataStore.saveTrainingSelection({ tables: tablesData });
+    console.log('✅ Combined auto-setup complete - navigating to mapping.html...');
+    window.location.href = 'mapping.html';
+  } catch (e) {
+    console.error('❌ Error in combined auto-setup:', e);
+    alert('Error in combined auto-setup: ' + e.message);
   }
 }
 
@@ -1135,6 +1260,66 @@ document.getElementById('tessPresetBtn').addEventListener('click', async () => {
     alert('Error loading TESS preset: ' + error.message);
   }
 });
+
+// Combined Kepler + TESS Preset Button Handler
+const combinedBtn = document.getElementById('combinedPresetBtn');
+if (combinedBtn) {
+  combinedBtn.addEventListener('click', async () => {
+    try {
+      const combinedPreset = PRESETS.kepler_tess;
+      if (!combinedPreset || !combinedPreset.autoSetup) {
+        alert('Combined preset configuration missing.');
+        return;
+      }
+      // Close modal immediately
+      const modal = document.getElementById('addTableModal');
+      if (modal) modal.classList.add('hidden');
+      console.log('🧬 Combined preset selected - ensuring Kepler & TESS tables present...');
+
+      // Helper to load table if absent (by name substring) and return table
+      const ensureTable = async (presetKey) => {
+        const p = PRESETS[presetKey];
+        if (!p) throw new Error(`Missing preset config: ${presetKey}`);
+        let existing = state.tables.find(t => new RegExp(p.name.split(' ')[0], 'i').test(t.name));
+        if (existing) return existing;
+        const datasetId = `dataset_${Date.now()}_${presetKey}`;
+        const tableId = await addTable(p.name, p.url, datasetId, null);
+        existing = state.tables.find(t => t.id === tableId);
+        return existing;
+      };
+
+      const keplerTable = await ensureTable('kepler');
+      const tessTable = await ensureTable('tess');
+      if (!keplerTable || !tessTable) {
+        alert('Failed to load one or both datasets for the combined preset.');
+        return;
+      }
+
+      // Select all rows in both if nothing selected yet
+      [keplerTable, tessTable].forEach(table => {
+        if (table.gridApi) {
+          const sel = table.gridApi.getSelectedRows();
+          if (!sel.length) {
+            table.gridApi.selectAll();
+            table.selectedRows = table.gridApi.getSelectedRows();
+            updateSelectionCount(table.id);
+          } else {
+            table.selectedRows = sel;
+          }
+        }
+      });
+      updateTotalSelectionCount();
+
+      // Slight delay to allow selection event handlers to fire
+      setTimeout(async () => {
+        await sendToTrainingCombined(combinedPreset.autoSetup);
+      }, 120);
+    } catch (error) {
+      console.error('Error handling combined preset:', error);
+      alert('Error loading Combined preset: ' + error.message);
+    }
+  });
+}
 
 // Tab switching in modal
 function switchUploadMode(mode) {
