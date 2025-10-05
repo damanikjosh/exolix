@@ -91,10 +91,57 @@ function getTrainingMode() {
 function getSavedPromptTemplate() {
   try { return localStorage.getItem(PROMPT_STORAGE_KEY) || ''; } catch { return ''; }
 }
+function setPromptTemplate(tmpl) {
+  try {
+    if (typeof tmpl === 'string') {
+      localStorage.setItem(PROMPT_STORAGE_KEY, tmpl.trim());
+      console.log('[explorer] 📄 Preset prompt template saved (' + tmpl.length + ' chars)');
+    }
+  } catch (e) {
+    console.warn('Unable to persist prompt template', e);
+  }
+}
+// Apply a preset's hard-coded prompt template (idempotent) and record which preset set it
+function applyPresetPrompt(presetKey) {
+  const preset = PRESETS[presetKey];
+  if (!preset) { console.warn('[explorer] Unknown preset key', presetKey); return; }
+  if (!preset.promptTemplate) { console.warn('[explorer] Preset has no promptTemplate', presetKey); return; }
+  setPromptTemplate(preset.promptTemplate);
+  try { localStorage.setItem(PROMPT_STORAGE_KEY + '.activePreset', presetKey); } catch {}
+  console.log(`[explorer] ✅ Prompt template applied for preset: ${presetKey}`);
+}
+// Build a dynamic default prompt using actual column / feature names for the active table
 function buildDefaultTemplate(featureCount) {
   if (!featureCount) return 'Row with feature {{0}}.';
   const parts = Array.from({ length: featureCount }, (_, i) => `f${i}={{${i}}}`);
-  return `Generate an embedding for exoplanet observation with ${parts.join(', ')}.`;
+  return `Generate an embedding for exoplanet observation with ${parts.join(', ')}.`; // fallback legacy
+}
+
+function humanize(name) {
+  if (!name) return name;
+  return name
+    .replace(/_/g, ' ')
+    .replace(/\b(ra|dec)\b/g, m => m.toUpperCase())
+    .replace(/\b(koi|pl|st|tfopwg)\b/gi, s => s.toUpperCase());
+}
+
+function buildDynamicPromptForTable(tableName) {
+  const fm = state.featureMapping;
+  if (!fm || !Array.isArray(fm.inputFeatures) || !fm.inputFeatures.length) {
+    return buildDefaultTemplate(fm?.inputFeatures?.length || 0);
+  }
+  const lines = fm.inputFeatures.map((feat, idx) => {
+    // choose the column name that belongs to this table (if any), else first column name
+    let colEntry = Array.isArray(feat.columns) ? feat.columns.find(c => c.tableName === tableName) : null;
+    if (!colEntry && Array.isArray(feat.columns) && feat.columns.length) colEntry = feat.columns[0];
+    const rawName = feat.featureName || feat.name || colEntry?.columnName || `feature_${idx}`;
+    return `- ${humanize(rawName)}: {{${idx}}}`;
+  });
+  return (
+    'You are an astrophysics assistant. Each row describes an exoplanet candidate observation.\n\n' +
+    'Features:\n' + lines.join('\n') + '\n\n' +
+    'Summarize the information to create a meaningful embedding.'
+  );
 }
 
 // Load feature mapping from database
@@ -155,6 +202,30 @@ const PRESETS = {
     name: 'Kepler Object of Interest 2025',
     get url() { return getAssetUrl('data/cumulative_2025.09.29_21.37.15.csv'); },
     datasetId: 'koi_2025',
+    promptTemplate: `You are an expert exoplanet classification assistant.
+You will be given numeric Kepler transit + stellar parameters already substituted into placeholders. Create a meaningful embedding for further classification of the candidate as CANDIDATE (0) or FALSE POSITIVE (1).
+
+Feature facts:
+Mid-transit epoch (BKJD) is {{0}}.
+Orbital period (days) is {{1}}.
+Impact parameter is {{2}}.
+Transit duration (hours) is {{3}}.
+Transit depth (ppm) is {{4}}.
+Planet radius (Earth radii) is {{5}}.
+Equilibrium temperature (K) is {{6}}.
+Insolation flux (Earth units) is {{7}}.
+Host star effective temperature (K) is {{8}}.
+Host star surface gravity log10(cm/s^2) is {{9}}.
+Host star radius (Solar radii) is {{10}}.
+Right ascension (deg) is {{11}}.
+Declination (deg) is {{12}}.
+Kepler magnitude is {{13}}.
+
+Label mapping:
+0 = CANDIDATE
+1 = FALSE POSITIVE
+
+Task: Output ONLY the embedding. No punctuation, no explanation, no extra text.`,
     autoSetup: {
       featureColumns: [
         // Added koi_time0bk (if present) then standard list
@@ -184,6 +255,26 @@ const PRESETS = {
     name: 'TESS Object of Interest 2025',
     get url() { return getAssetUrl('data/TOI_2025.10.01_18.37.10.csv'); },
     datasetId: 'toi_2025',
+    promptTemplate: `You are an expert assistant generating embeddings for TESS exoplanet candidate parameters.
+You are a TESS exoplanet vetting assistant. Create a meaningful embedding for further classification of the candidate as CANDIDATE (0) or FALSE POSITIVE (1).
+
+Feature facts:
+Orbital period (days) is {{0}}.
+Transit duration (hours) is {{1}}.
+Transit depth is {{2}}.
+Planet radius (Earth radii) is {{3}}.
+Equilibrium temperature (K) is {{4}}.
+Insolation flux (Earth units) is {{5}}.
+Host star effective temperature (K) is {{6}}.
+Host star radius (Solar radii) is {{7}}.
+Right ascension (deg) is {{8}}.
+Declination (deg) is {{9}}.
+
+Label mapping:
+0 = CANDIDATE (PC or KP)
+1 = FALSE POSITIVE (FP)
+
+Task: Output ONLY the embedding. No punctuation, no explanation, no extra text.`,
     autoSetup: {
       // Approximate alignment to Kepler feature semantics (missing some)
       featureColumns: [
@@ -209,6 +300,26 @@ const PRESETS = {
   kepler_tess: {
     name: 'Kepler + TESS Combined 2025',
     sources: ['kepler', 'tess'],
+    promptTemplate: `You are an astrophysics model producing unified embeddings for harmonized Kepler + TESS transit & stellar features.
+You are performing cross-survey (Kepler + TESS) binary classification of exoplanet candidates. Create a meaningful embedding for further classification of the candidate as CANDIDATE (0) or FALSE POSITIVE (1).
+
+Unified feature facts:
+Orbital period (days) is {{0}}.
+Transit duration (hours) is {{1}}.
+Transit depth is {{2}}.
+Planet radius (Earth radii) is {{3}}.
+Equilibrium temperature (K) is {{4}}.
+Insolation flux (Earth units) is {{5}}.
+Stellar effective temperature (K) is {{6}}.
+Stellar radius (Solar radii) is {{7}}.
+Right ascension (deg) is {{8}}.
+Declination (deg) is {{9}}.
+
+Label mapping (union semantics):
+0 = CANDIDATE (CANDIDATE, CONFIRMED, PC, KP)
+1 = FALSE POSITIVE (FALSE POSITIVE, FP)
+
+Task: Output ONLY the embedding. No punctuation, no explanation, no extra text.`,
     autoSetup: {
       // Per-dataset feature name mapping
       featureMappings: [
@@ -396,7 +507,9 @@ async function runPredictionsEmbedding(table, selectedRows) {
   }
   // Prompt
   let prompt = getSavedPromptTemplate().trim();
-  if (!prompt) prompt = buildDefaultTemplate(featureCount);
+  if (!prompt) {
+    prompt = buildDynamicPromptForTable(table.name);
+  }
   // If a previous job running, abort it
   if (currentEmbeddingJob && currentEmbeddingJob.timerId) {
     currentEmbeddingJob.aborted = true;
@@ -917,7 +1030,8 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
     
     // Create feature mapping for simple single-dataset presets (shared feature columns across tables)
     const featureMapping = {
-      inputFeatures: autoSetupConfig.featureColumns.map(columnName => ({
+      inputFeatures: autoSetupConfig.featureColumns.map((columnName, idx) => ({
+        featureName: columnName, // preserve for prompt builder
         columns: tablesData.map((table, tableIndex) => ({
           tableIndex,
           columnName,
@@ -925,6 +1039,7 @@ async function sendToTrainingWithAutoSetup(presetKey, autoSetupConfig) {
         }))
       })),
       outputFeature: {
+        featureName: autoSetupConfig.labelColumn || 'label',
         columns: tablesData.map((table, tableIndex) => ({
           tableIndex,
           columnName: autoSetupConfig.labelColumn,
@@ -1025,6 +1140,7 @@ async function sendToTrainingCombined(autoSetupConfig) {
     console.log('🎯 Building unified feature mapping for combined preset...');
     const featureMapping = {
       inputFeatures: autoSetupConfig.featureMappings.map(fm => ({
+        featureName: `${fm.kepler}/${fm.tess}`,
         columns: tablesData.map((table, tableIndex) => ({
           tableIndex,
           columnName: /Kepler/i.test(table.tabName) ? fm.kepler : fm.tess,
@@ -1032,6 +1148,7 @@ async function sendToTrainingCombined(autoSetupConfig) {
         }))
       })),
       outputFeature: {
+        featureName: `${autoSetupConfig.labelColumns.kepler}/${autoSetupConfig.labelColumns.tess}`,
         columns: tablesData.map((table, tableIndex) => ({
           tableIndex,
           columnName: /Kepler/i.test(table.tabName) ? autoSetupConfig.labelColumns.kepler : autoSetupConfig.labelColumns.tess,
@@ -1194,6 +1311,8 @@ document.getElementById('keplerPresetBtn').addEventListener('click', async () =>
     const name = preset.name;
     const url = preset.url;
     const datasetId = `dataset_${Date.now()}`;
+    // Apply prompt immediately (before any async work)
+    applyPresetPrompt('kepler');
     
     // Close modal immediately
     document.getElementById('addTableModal').classList.add('hidden');
@@ -1202,6 +1321,8 @@ document.getElementById('keplerPresetBtn').addEventListener('click', async () =>
     
     // Load the table
     const tableId = await addTable(name, url, datasetId, null);
+  // Re-apply defensively after table load in case of race or user clearing storage
+  applyPresetPrompt('kepler');
     
     // Auto-setup with Kepler configuration
     if (tableId && preset.autoSetup) {
@@ -1233,6 +1354,7 @@ document.getElementById('tessPresetBtn').addEventListener('click', async () => {
     const name = preset.name;
     const url = preset.url;
     const datasetId = `dataset_${Date.now()}`;
+    applyPresetPrompt('tess');
     
     // Close modal immediately
     document.getElementById('addTableModal').classList.add('hidden');
@@ -1241,6 +1363,7 @@ document.getElementById('tessPresetBtn').addEventListener('click', async () => {
     
     // Load the table (no auto-setup for TESS yet)
     await addTable(name, url, datasetId, null);
+  applyPresetPrompt('tess');
     
     // If TESS has auto-setup in the future, add it here
     if (preset.autoSetup) {
@@ -1271,6 +1394,7 @@ if (combinedBtn) {
         alert('Combined preset configuration missing.');
         return;
       }
+      applyPresetPrompt('kepler_tess');
       // Close modal immediately
       const modal = document.getElementById('addTableModal');
       if (modal) modal.classList.add('hidden');
@@ -1290,6 +1414,8 @@ if (combinedBtn) {
 
       const keplerTable = await ensureTable('kepler');
       const tessTable = await ensureTable('tess');
+  // Re-apply after ensuring both tables
+  applyPresetPrompt('kepler_tess');
       if (!keplerTable || !tessTable) {
         alert('Failed to load one or both datasets for the combined preset.');
         return;
