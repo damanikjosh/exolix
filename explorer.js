@@ -256,7 +256,7 @@ Task: Output ONLY 0 or 1. No punctuation, no extra text.`,
       labelColumn: 'disposition',
       labelGroups: [
         { name: 'CANDIDATE', values: ['CANDIDATE','CONFIRMED'] },
-        { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE'] }
+        { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE', 'REFUTED'] }
       ],
       llmOnly: true // custom flag to optionally enforce embedding mode
     }
@@ -309,7 +309,7 @@ Task: Output ONLY the embedding. No punctuation, no explanation, no extra text.`
       ],
       labelColumn: 'koi_disposition',
       labelGroups: [
-        { name: 'CANDIDATE', values: ['CONFIRMED'] },
+        { name: 'CANDIDATE', values: ['CANDIDATE', 'CONFIRMED'] },
         { name: 'FALSE POSITIVE', values: ['FALSE POSITIVE'] }
       ]
     }
