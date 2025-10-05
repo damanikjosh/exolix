@@ -4,7 +4,12 @@ import dataStore from './dataStore.js';
 
 const ENCODER_URL = 'https://api.exolix.club/encode';
 // Expected maximum encode time (approx 5 minutes)
-const ENCODER_EXPECTED_MS = 5 * 60 * 1000; // 300000 ms
+const ENCODER_EXPECTED_MS = 5 * 60 * 1000; // 300000 ms legacy single-shot expectation
+// Polling configuration for new async job API
+const ENCODER_POLL_INTERVAL_MS = 1000;         // 1s between polls
+const ENCODER_MAX_WAIT_MS = 10 * 60 * 1000;    // 10 minutes hard timeout
+// Disable the legacy results box per user request (only progress bar + embedding preview remain)
+const ENABLE_RESULTS_BOX = false;
 const PROMPT_STORAGE_KEY = 'exolix.prompt.template.v1';
 const TRAIN_MODE_KEY = 'exolix.train.mode.v1'; // stores '0' or '1'
 console.log('[promptflow] v16 USING', ENCODER_URL, 'from', import.meta.url);
@@ -76,11 +81,13 @@ function ensureDefaultPromptInEditor() {
   }
 }
 
-// ---------------- Results UI ----------------
+// ---------------- Results UI (disabled) ----------------
 function ensureResultsUI() {
+  if (!ENABLE_RESULTS_BOX) return null;
   let r = $('pbResults');
   if (r) return r;
   const card = $('promptBuilderCard');
+  if (!card) return null;
   r = document.createElement('div');
   r.id = 'pbResults';
   r.className = 'mt-6 hidden';
@@ -93,6 +100,21 @@ function ensureResultsUI() {
   `;
   card.appendChild(r);
   return r;
+}
+function setResult(summary, preview) {
+  if (!ENABLE_RESULTS_BOX) {
+    // Provide console feedback only
+    if (summary) console.log('[promptflow][result]', summary);
+    if (preview) console.debug('[promptflow][detail]', preview);
+    return;
+  }
+  const r = ensureResultsUI();
+  if (!r) return;
+  const sum = $('pbResultSummary');
+  const pre = $('pbResultPreview');
+  if (sum) sum.textContent = summary || '';
+  if (pre) pre.textContent = preview || '';
+  show(r);
 }
 function notifyResponse(payload) {
   document.dispatchEvent(new CustomEvent('promptflow:response', { detail: payload }));
@@ -107,7 +129,7 @@ function createProgress() {
   const fill = $('pbProgFill');
   const label = $('pbProgLabel');
   const etaEl = $('pbProgTime');
-  let start = 0, duration = 14000, rafId = null;
+  let start = 0, duration = 14000, rafId = null, manualMode = false, currentPhase = 'normal';
   function formatEta(sec) {
     if (sec == null || !isFinite(sec)) return '';
     const s = Math.max(0, Math.ceil(sec));
@@ -120,11 +142,26 @@ function createProgress() {
     if (txt && label) label.textContent = txt;
     if (etaEl) etaEl.textContent = etaSec != null ? formatEta(etaSec) : '';
   }
+  function applyPhase(phase) {
+    if (!fill) return;
+    if (phase === currentPhase) return;
+    fill.classList.remove('bg-blue-500','bg-amber-500','bg-red-500','bg-green-500');
+    switch (phase) {
+      case 'finalizing': fill.classList.add('bg-amber-500'); break;
+      case 'failed': fill.classList.add('bg-red-500'); break;
+      case 'done': fill.classList.add('bg-green-500'); break;
+      default: fill.classList.add('bg-blue-500');
+    }
+    currentPhase = phase;
+  }
   function begin(ms = 14000, msg = 'Processing…') {
+    manualMode = false;
     show(wrap);
     start = performance.now();
     duration = Math.max(1200, ms);
+    applyPhase('normal');
     const tick = () => {
+      if (manualMode) return; // stop animated progression when switched to manual updates
       const t = performance.now() - start;
       const p = Math.min(100, (t / duration) * 100);
       set(p, msg, Math.max(0, (duration - t) / 1000));
@@ -132,18 +169,35 @@ function createProgress() {
     };
     rafId = requestAnimationFrame(tick);
   }
+  function manual(msg = 'Queued…') {
+    if (rafId) cancelAnimationFrame(rafId);
+    manualMode = true;
+    show(wrap);
+    start = performance.now();
+    applyPhase('normal');
+    set(0, msg, undefined);
+  }
   function done(msg = 'Completed') {
     if (rafId) cancelAnimationFrame(rafId);
     set(100, msg, 0);
+    applyPhase('done');
     setTimeout(() => hide(wrap), 800);
   }
   function fail(msg = 'Failed') {
     if (rafId) cancelAnimationFrame(rafId);
     if (label) label.textContent = msg;
-    if (fill) { fill.style.width = '100%'; fill.classList.remove('bg-blue-500'); fill.classList.add('bg-red-500'); }
+    if (fill) { fill.style.width = '100%'; }
+    applyPhase('failed');
     if (etaEl) etaEl.textContent = '';
   }
-  return { begin, done, fail };
+  function update(progressPct, msg, etaSec, opts = {}) {
+    manualMode = true;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    set(progressPct, msg, etaSec);
+    if (opts.finalizing) applyPhase('finalizing');
+    else if (currentPhase === 'finalizing' && !opts.finalizing) applyPhase('normal');
+  }
+  return { begin, manual, update, done, fail };
 }
 
 // ---------------- State ----------------
@@ -401,12 +455,38 @@ async function buildMatrixLocallyIfMissing() {
 }
 
 // ---------------- POST /encode ----------------
+let currentEncodeJob = null; // { jobId, timerId, aborted, lastProgress, finalizeWaits }
+
+// Small helper: show/hide a finalizing transfer indicator (appears near progress bar)
+function setTransferIndicator(on, text = 'Receiving large embedding…') {
+  let el = $('pbTransferIndicator');
+  const host = $('pbProgressWrap')?.parentElement || $('promptBuilderCard');
+  if (!on) {
+    if (el) el.remove();
+    return;
+  }
+  if (!host) return;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pbTransferIndicator';
+    el.className = 'mt-2 text-xs text-blue-300 flex items-center gap-2 animate-pulse';
+    el.innerHTML = `<span class="inline-block h-3 w-3 rounded-full bg-blue-400 animate-ping"></span><span class="indicator-text"></span>`;
+    host.appendChild(el);
+  }
+  const txtNode = el.querySelector('.indicator-text');
+  if (txtNode) txtNode.textContent = text;
+}
 async function sendToEncoder() {
   const btn = $('pbGenerateEmbedding'); if (btn) btn.disabled = true;
   const prompt = getEditorText().trim() || buildDefaultTemplate(featureCount);
   const progress = createProgress();
-  // Start a long (5 min) progress bar; will complete early if response returns sooner.
-  progress.begin(ENCODER_EXPECTED_MS, 'Embedding (up to ~5 min)…');
+  const startTime = performance.now();
+
+  // If there is a previous job polling, cancel it.
+  if (currentEncodeJob && currentEncodeJob.intervalId) {
+    currentEncodeJob.aborted = true;
+    clearInterval(currentEncodeJob.intervalId);
+  }
 
   try {
     if (!is2D(matrix) || !matrix.length) throw new Error('No samples found. Load data → Explorer → Mapping → Send to Training, then return.');
@@ -417,47 +497,167 @@ async function sendToEncoder() {
     const clean = matrix.map(row => row.map(v => Number(v)));
     if (!clean.every(row => row.every(isNum))) throw new Error('Data matrix contains non-numeric values.');
 
-    console.log('[promptflow] POSTing to', ENCODER_URL);
+    console.log('[promptflow] (async) POSTing to', ENCODER_URL);
+    progress.manual('Submitting…');
     const res = await fetch(ENCODER_URL, {
       method: 'POST',
       mode: 'cors',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, data: clean })
     });
-
     if (!res.ok) throw new Error(`Encoder responded ${res.status}`);
-    const payload = await res.json().catch(() => ({}));
-    showEmbeddingSummary(payload); notifyResponse(payload);
-    // Forward embedding to training pipeline
+    const initial = await res.json().catch(() => ({}));
+
+    // Legacy fallback: embedding returned immediately
+    if (initial && initial.embedding) {
+      console.log('[promptflow] Received immediate embedding (legacy behaviour).');
+      progress.update(80, 'Processing…');
+      finalizeEmbedding(initial, progress);
+      return;
+    }
+
+    const jobId = initial.job_id || initial.jobId;
+    if (!jobId) throw new Error('No job_id returned by encoder API');
+    console.log('[promptflow] Job submitted id=', jobId);
+  setResult(`🕒 Job submitted: ${jobId}`, 'Polling for progress…');
+    progress.update(0, 'Queued…');
+
+    // Helper ETA computing
+    function estimateEta(progressFraction) {
+      if (progressFraction <= 0 || progressFraction >= 1) return undefined;
+      const elapsed = (performance.now() - startTime) / 1000; // sec
+      const total = elapsed / progressFraction;
+      return Math.max(0, total - elapsed);
+    }
+
+  currentEncodeJob = { jobId, aborted: false, timerId: null, lastProgress: 0, finalizeWaits: 0 };
+    const pollUrl = `${ENCODER_URL.replace(/\/$/, '')}/${jobId}`;
+
+    let polling = false; // guard against overlap
+    async function pollOnce() {
+      if (!currentEncodeJob || currentEncodeJob.aborted || polling) return;
+      polling = true;
+      try {
+        const pr = await fetch(pollUrl, { method: 'GET', mode: 'cors' });
+        let info = null;
+        // Try to parse body even on 404 (API may have deleted job right after delivering result)
+        try { info = await pr.json(); } catch { info = {}; }
+        if (pr.status === 404) {
+          // If we already reached high progress and now 404, assume completion if embedding present
+            if (info && Array.isArray(info.embedding)) {
+              console.warn('[promptflow] 404 but embedding payload present – treating as complete');
+              finalizeEmbedding(info, progress, jobId);
+              currentEncodeJob = null;
+              return;
+            }
+            if (currentEncodeJob.lastProgress >= 0.95) {
+              console.warn('[promptflow] Job 404 after high progress; assuming completed but lost result.');
+              throw new Error('Job finished but result not retrieved. Please retry.');
+            }
+            throw new Error('Job disappeared (404)');
+        }
+        if (!pr.ok) throw new Error(`Poll HTTP ${pr.status}`);
+        const status = info.status || 'unknown';
+        const prog = Number(info.progress || 0);
+        currentEncodeJob.lastProgress = prog;
+        // If embedding arrives early regardless of status value
+        if (Array.isArray(info.embedding)) {
+          setTransferIndicator(false);
+          finalizeEmbedding(info, progress, jobId);
+          currentEncodeJob = null;
+          return;
+        }
+        if (status === 'error') throw new Error(info.error || 'Encoder job error');
+
+        // Handle "done" status without immediate embedding: allow a few extra polling cycles (grace window)
+        if (status === 'done' && !Array.isArray(info.embedding)) {
+          currentEncodeJob.finalizeWaits = (currentEncodeJob.finalizeWaits || 0) + 1;
+          if (currentEncodeJob.finalizeWaits > 8) { // ~8 seconds grace
+            throw new Error('Embedding payload not delivered after completion. Please retry.');
+          }
+          // Show finalizing indicator and keep progress at 99.9%
+          setTransferIndicator(true, 'Finalizing… receiving embedding payload');
+          progress.update(99.9, 'Finalizing…', undefined, { finalizing: true });
+          return; // schedule next poll
+        }
+
+        const pctRaw = Math.max(0, Math.min(100, prog * 100));
+        let pct = pctRaw;
+        // If progress reports 100% but embedding not yet attached, keep UI <100 to signal waiting
+        if (pctRaw >= 100) {
+          pct = 99.9;
+          setTransferIndicator(true, 'Finalizing… receiving embedding payload');
+        } else if (pctRaw >= 99) {
+          setTransferIndicator(true, 'Almost done… preparing embedding');
+        } else {
+          setTransferIndicator(false);
+        }
+        const eta = estimateEta(prog);
+        let labelTxt = 'Embedding…';
+        if (status === 'queued' || status === 'pending') labelTxt = 'Queued…';
+        else if (status === 'running' || status === 'processing') labelTxt = `Embedding ${pct.toFixed(1)}%`;
+        setResult(`⏳ Job ${jobId} ${status}`, `Progress: ${pctRaw.toFixed(1)}%`);
+  const finalizingPhase = (pct >= 99.9 && pct < 100) && status !== 'error';
+  progress.update(pct, labelTxt, eta, { finalizing: finalizingPhase });
+        if (performance.now() - startTime > ENCODER_MAX_WAIT_MS) {
+          throw new Error('Encoding job timed out');
+        }
+      } catch (e) {
+        if (currentEncodeJob) currentEncodeJob.aborted = true;
+        handleEncodeError(e, progress);
+        return; // stop further scheduling
+      } finally {
+        polling = false;
+      }
+      // schedule next only if still active
+      if (currentEncodeJob && !currentEncodeJob.aborted) {
+        currentEncodeJob.timerId = setTimeout(pollOnce, ENCODER_POLL_INTERVAL_MS);
+      }
+    }
+
+    // Kick off polling (sequential)
+    await pollOnce();
+  } catch (err) {
+    handleEncodeError(err, progress);
+  }
+}
+
+function handleEncodeError(err, progress) {
+  console.error('[promptflow] encode error:', err);
+  setResult(`❌ ${err.message}`, '');
+  progress.fail('Failed');
+  const btn = $('pbGenerateEmbedding'); if (btn) btn.disabled = false;
+}
+
+function finalizeEmbedding(payload, progress, jobId) {
+  try {
+    setTransferIndicator(false);
+    showEmbeddingSummary(payload);
+    notifyResponse(payload);
     if (typeof window.__setLLMEmbedding === 'function') {
       window.__setLLMEmbedding(payload);
     }
-    // Show small preview subset
     const prevWrap = $('pbEmbeddingPreview');
     const prevBlock = $('pbEmbedPreviewBlock');
     if (prevWrap && prevBlock && payload && payload.embedding) {
       prevWrap.classList.remove('hidden');
       const emb = payload.embedding;
-      // Persist embedding for external training consumption
       embeddingMatrix = emb;
-      embeddingMeta = { rows: emb.length, dims: emb[0]?.length || 0, receivedAt: Date.now() };
+      embeddingMeta = { rows: emb.length, dims: emb[0]?.length || 0, receivedAt: Date.now(), jobId };
       document.dispatchEvent(new CustomEvent('exolix:embedding-ready', { detail: embeddingMeta }));
       const first = emb.slice(0, 3).map(row => row.slice(0, Math.min(8, row.length)));
       prevBlock.textContent = `Rows: ${emb.length}, Dims: ${emb[0].length}\nPreview (first 3 rows × first up to 8 dims):\n` + first.map(r => r.map(v => (typeof v === 'number'? v.toFixed(4): v)).join(', ')).join('\n');
     }
-    progress.done('Sent');
-  } catch (err) {
-    console.error('[promptflow] encode error:', err);
-    const r = ensureResultsUI(); $('pbResultSummary').textContent = `❌ ${err.message}`; $('pbResultPreview').textContent = ''; show(r);
-    progress.fail('Failed');
-  } finally { if (btn) btn.disabled = false; }
+    progress.done('Completed');
+  } catch (e) {
+    handleEncodeError(e, progress);
+    return;
+  }
+  const btn = $('pbGenerateEmbedding'); if (btn) btn.disabled = false;
 }
 
 // Show embedding summary
 function showEmbeddingSummary(payload) {
-  const r = ensureResultsUI();
-  const sum = $('pbResultSummary');
-  const pre = $('pbResultPreview');
   let summary = 'ℹ️ Response received.';
   let preview = '';
   const emb = payload && payload.embedding;
@@ -471,7 +671,7 @@ function showEmbeddingSummary(payload) {
   } else {
     preview = JSON.stringify(payload, null, 2);
   }
-  sum.textContent = summary; pre.textContent = preview; show(r);
+  setResult(summary, preview);
 }
 
 // ---------------- Init ----------------

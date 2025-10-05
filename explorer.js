@@ -14,7 +14,8 @@ const state = {
   model: null, // Cached loaded TFJS model
   modelAvailable: false, // Whether saved model exists
   modelStorageUrl: null, // Chosen storage URL for loaded model (indexeddb preferred)
-  labelNames: [] // Ordered label names from mapping
+  labelNames: [], // Ordered label names from mapping
+  predictionInProgress: false // Prevent concurrent prediction requests
 };
 
 // Persistence / integration keys (mirrors promptflow & training)
@@ -22,6 +23,66 @@ const TRAIN_MODE_KEY = 'exolix.train.mode.v1'; // '0' raw, '1' llm embedding
 const PROMPT_STORAGE_KEY = 'exolix.prompt.template.v1';
 const ENCODER_URL = 'https://api.exolix.club/encode';
 let embeddingStatusEl = null; // ephemeral UI element for embedding prediction status
+// Async embedding job polling configuration
+const ENCODER_POLL_INTERVAL_MS = 1000; // 1s
+const ENCODER_MAX_WAIT_MS = 10 * 60 * 1000; // 10 min hard timeout
+let currentEmbeddingJob = null; // { jobId, aborted, timerId, lastProgress, finalizeWaits }
+
+// ---------------- Embedding Progress UI ----------------
+function ensureEmbeddingPanel() {
+  let panel = document.getElementById('embeddingJobPanel');
+  if (panel) return panel;
+  panel = document.createElement('div');
+  panel.id = 'embeddingJobPanel';
+  panel.className = 'fixed bottom-4 right-4 w-80 max-w-[90vw] p-4 rounded-lg bg-gray-900/95 border border-gray-700 shadow-xl text-xs font-medium text-gray-200 space-y-2 backdrop-blur-sm z-50';
+  panel.innerHTML = `
+    <div class="flex items-center justify-between gap-2">
+      <span id="embedJobStatus" class="text-indigo-200 truncate">Preparing…</span>
+      <button id="embedJobCancel" type="button" class="text-red-300 hover:text-red-400 text-[10px] uppercase tracking-wide">Cancel</button>
+    </div>
+    <div class="h-2 w-full bg-gray-700/60 rounded overflow-hidden">
+      <div id="embedJobFill" class="h-full bg-indigo-500 transition-all duration-300 ease-out" style="width:0%"></div>
+    </div>
+    <div id="embedJobDetail" class="text-[11px] text-gray-400 leading-snug min-h-[1.25rem]"></div>
+  `;
+  document.body.appendChild(panel);
+  // Wire cancel
+  panel.querySelector('#embedJobCancel').addEventListener('click', () => {
+    if (currentEmbeddingJob) {
+      currentEmbeddingJob.aborted = true;
+      if (currentEmbeddingJob.timerId) clearTimeout(currentEmbeddingJob.timerId);
+      updateEmbeddingPanel(null, 'Cancelled', 'Job aborted by user');
+      setTimeout(hideEmbeddingPanel, 1500);
+      // Resolve promise so outer await can proceed (treated as graceful cancellation)
+      if (currentEmbeddingJob._resolve) currentEmbeddingJob._resolve({ cancelled: true });
+      currentEmbeddingJob = null;
+    }
+  });
+  return panel;
+}
+function hideEmbeddingPanel() {
+  const panel = document.getElementById('embeddingJobPanel');
+  if (panel) panel.remove();
+}
+function updateEmbeddingPanel(pct, status, detail, options = {}) {
+  const panel = ensureEmbeddingPanel();
+  const statusEl = panel.querySelector('#embedJobStatus');
+  const fillEl = panel.querySelector('#embedJobFill');
+  const detailEl = panel.querySelector('#embedJobDetail');
+  if (statusEl && status) statusEl.textContent = status;
+  if (detailEl && detail !== undefined) detailEl.textContent = detail;
+  if (fillEl && pct != null) {
+    const width = Math.max(0, Math.min(100, pct));
+    fillEl.style.width = width + '%';
+    if (options.finalizing) {
+      fillEl.classList.remove('bg-indigo-500');
+      fillEl.classList.add('bg-amber-500');
+    } else if (options.error) {
+      fillEl.classList.remove('bg-indigo-500');
+      fillEl.classList.add('bg-red-500');
+    }
+  }
+}
 
 // Helpers for mode & prompt
 function getTrainingMode() {
@@ -292,43 +353,139 @@ async function runPredictionsEmbedding(table, selectedRows) {
   // Prompt
   let prompt = getSavedPromptTemplate().trim();
   if (!prompt) prompt = buildDefaultTemplate(featureCount);
-  // Provide visible status feedback
-  if (!embeddingStatusEl) {
-    embeddingStatusEl = document.createElement('div');
-    embeddingStatusEl.className = 'fixed bottom-4 right-4 z-50 px-4 py-3 rounded bg-indigo-900/90 text-indigo-200 text-sm shadow-lg border border-indigo-700';
-    document.body.appendChild(embeddingStatusEl);
+  // If a previous job running, abort it
+  if (currentEmbeddingJob && currentEmbeddingJob.timerId) {
+    currentEmbeddingJob.aborted = true;
+    clearTimeout(currentEmbeddingJob.timerId);
   }
-  function setEmbedStatus(txt) { if (embeddingStatusEl) embeddingStatusEl.textContent = txt; }
-  setEmbedStatus('Embedding: preparing matrix…');
-  console.log('[explorer] 🔁 (EMBED) Starting embedding inference path');
-  console.log('[explorer] (EMBED) Rows:', rawMatrix.length, 'Features:', featureCount, 'Prompt chars:', prompt.length);
-  // POST to encoder
-  console.log('[explorer] (EMBED) POST', ENCODER_URL);
-  setEmbedStatus('Embedding: contacting encoder…');
-  const res = await fetch(ENCODER_URL, {
-    method: 'POST',
-    mode: 'cors',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, data: rawMatrix })
-  });
-  console.log('[explorer] (EMBED) Response status:', res.status);
-  if (!res.ok) { setEmbedStatus('Embedding failed: HTTP ' + res.status); throw new Error('Encoder HTTP ' + res.status); }
-  const payload = await res.json().catch(() => ({}));
-  const emb = payload && payload.embedding;
-  if (!Array.isArray(emb) || !emb.length || !Array.isArray(emb[0])) {
-    setEmbedStatus('Embedding failed: bad payload');
-    throw new Error('Encoder response missing embedding matrix');
+  currentEmbeddingJob = null;
+  const startTime = performance.now();
+  updateEmbeddingPanel(0, 'Submitting…', `Rows: ${rawMatrix.length}  Dims(raw): ${featureCount}`);
+
+  // Submit job (or legacy immediate response)
+  let initial;
+  try {
+    const res = await fetch(ENCODER_URL, {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, data: rawMatrix })
+    });
+    if (!res.ok) throw new Error('Encoder HTTP ' + res.status);
+    initial = await res.json().catch(() => ({}));
+  } catch (e) {
+    updateEmbeddingPanel(0, 'Error', e.message, { error: true });
+    throw e;
   }
-  if (emb.length !== selectedRows.length) {
-    console.warn('[explorer] Embedding row count mismatch', emb.length, 'vs selected', selectedRows.length);
+
+  // Legacy immediate embedding
+  if (initial && Array.isArray(initial.embedding)) {
+    // Wrap in a resolved promise interface for consistent caller handling
+    await finalizeEmbeddingPrediction(initial.embedding, selectedRows, table);
+    updateEmbeddingPanel(100, 'Done', 'Predictions complete ✓');
+    setTimeout(hideEmbeddingPanel, 2500);
+    return { success: true, immediate: true };
+  }
+
+  const jobId = initial.job_id || initial.jobId;
+  if (!jobId) {
+    updateEmbeddingPanel(0, 'Error', 'No job_id in response', { error: true });
+    throw new Error('No job_id from encoder');
+  }
+  console.log('[explorer] (EMBED) Job ID', jobId);
+  updateEmbeddingPanel(0, 'Queued…', `Job ${jobId.substring(0,8)}…`);
+
+  // Promise that resolves/rejects when embedding + predictions finish
+  let lifecycleResolve, lifecycleReject;
+  const lifecyclePromise = new Promise((res, rej) => { lifecycleResolve = res; lifecycleReject = rej; });
+
+  currentEmbeddingJob = { jobId, aborted: false, timerId: null, lastProgress: 0, finalizeWaits: 0, _resolve: lifecycleResolve, _reject: lifecycleReject };
+  const pollUrl = `${ENCODER_URL.replace(/\/$/, '')}/${jobId}`;
+
+  function eta(progressFraction) {
+    if (!progressFraction || progressFraction <= 0 || progressFraction >= 1) return undefined;
+    const elapsed = (performance.now() - startTime)/1000;
+    return Math.max(0, (elapsed / progressFraction) - elapsed);
+  }
+
+  let polling = false;
+  const pollOnce = async () => {
+    if (!currentEmbeddingJob || currentEmbeddingJob.aborted || polling) return;
+    polling = true;
+    try {
+      const pr = await fetch(pollUrl, { method: 'GET', mode: 'cors' });
+      let info = {};
+      try { info = await pr.json(); } catch { info = {}; }
+      if (pr.status === 404) {
+        if (info && Array.isArray(info.embedding)) {
+          console.warn('[explorer] 404 but embedding present (treat complete)');
+          await finalizeEmbeddingPrediction(info.embedding, selectedRows, table);
+          updateEmbeddingPanel(100, 'Done', 'Predictions complete ✓');
+          if (currentEmbeddingJob && currentEmbeddingJob._resolve) currentEmbeddingJob._resolve({ success: true });
+          currentEmbeddingJob = null;
+          setTimeout(hideEmbeddingPanel, 2500);
+          return;
+        }
+        if (currentEmbeddingJob.lastProgress >= 0.95) {
+          throw new Error('Job finished but embedding lost');
+        }
+        throw new Error('Job disappeared (404)');
+      }
+      if (!pr.ok) throw new Error('Poll HTTP ' + pr.status);
+      const status = info.status || 'unknown';
+      const prog = Number(info.progress || 0);
+      currentEmbeddingJob.lastProgress = prog;
+      if (Array.isArray(info.embedding)) {
+        await finalizeEmbeddingPrediction(info.embedding, selectedRows, table);
+        updateEmbeddingPanel(100, 'Done', 'Predictions complete ✓');
+        if (currentEmbeddingJob && currentEmbeddingJob._resolve) currentEmbeddingJob._resolve({ success: true });
+        currentEmbeddingJob = null;
+        setTimeout(hideEmbeddingPanel, 2500);
+        return;
+      }
+      if (status === 'error') throw new Error(info.error || 'Encoder job error');
+      if (status === 'done') {
+        currentEmbeddingJob.finalizeWaits++;
+        if (currentEmbeddingJob.finalizeWaits > 8) throw new Error('Embedding not delivered after completion');
+        updateEmbeddingPanel(99.9, 'Finalizing…', 'Receiving embedding…', { finalizing: true });
+      } else {
+        let pctRaw = Math.max(0, Math.min(100, prog * 100));
+        let pct = pctRaw;
+        if (pctRaw >= 100) { pct = 99.9; updateEmbeddingPanel(pct, 'Finalizing…', 'Receiving embedding…', { finalizing: true }); }
+        else if (pctRaw >= 99) updateEmbeddingPanel(pct, 'Almost done…', `Progress ${pctRaw.toFixed(1)}%`);
+        else updateEmbeddingPanel(pct, status === 'queued' || status === 'pending' ? 'Queued…' : `Embedding ${pct.toFixed(1)}%`, `Progress ${pctRaw.toFixed(1)}%  ETA: ${eta(prog) ? eta(prog).toFixed(1)+'s' : '—'}`);
+      }
+      if (performance.now() - startTime > ENCODER_MAX_WAIT_MS) throw new Error('Embedding job timed out');
+    } catch (e) {
+      if (currentEmbeddingJob) currentEmbeddingJob.aborted = true;
+      updateEmbeddingPanel(currentEmbeddingJob?.lastProgress ? currentEmbeddingJob.lastProgress*100 : 0, 'Error', e.message, { error: true });
+      if (currentEmbeddingJob && currentEmbeddingJob._reject) currentEmbeddingJob._reject(e);
+      throw e;
+    } finally {
+      polling = false;
+    }
+    if (currentEmbeddingJob && !currentEmbeddingJob.aborted) {
+      currentEmbeddingJob.timerId = setTimeout(pollOnce, ENCODER_POLL_INTERVAL_MS);
+    }
+  };
+  await pollOnce();
+  return lifecyclePromise;
+}
+
+// Finalize: predict with received embedding matrix
+async function finalizeEmbeddingPrediction(embeddingMatrix, selectedRows, table) {
+  if (!Array.isArray(embeddingMatrix) || !embeddingMatrix.length || !Array.isArray(embeddingMatrix[0])) {
+    throw new Error('Bad embedding payload');
+  }
+  if (embeddingMatrix.length !== selectedRows.length) {
+    console.warn('[explorer] Embedding row count mismatch', embeddingMatrix.length, 'vs selected', selectedRows.length);
   }
   const model = await loadModelIfNeeded();
   if (!model) throw new Error('Failed to load model');
   const tf = await import('@tensorflow/tfjs'); await tf.ready();
-  const dims = emb[0].length;
-  console.log(`[explorer] ✅ (EMBED) Received embedding ${emb.length} × ${dims}. Predicting...`);
-  setEmbedStatus('Embedding received. Predicting…');
-  const tensor = tf.tensor2d(emb, [emb.length, dims]);
+  const dims = embeddingMatrix[0].length;
+  updateEmbeddingPanel(90, 'Predicting…', `Embedding ${embeddingMatrix.length}×${dims}`);
+  const tensor = tf.tensor2d(embeddingMatrix, [embeddingMatrix.length, dims]);
   const preds = model.predict(tensor);
   const predIndices = preds.argMax(-1).dataSync();
   selectedRows.forEach((r, idx) => {
@@ -338,13 +495,27 @@ async function runPredictionsEmbedding(table, selectedRows) {
       : `Class ${labelIndex}`;
   });
   tf.dispose([tensor, preds]);
-  setEmbedStatus('Predictions complete ✓');
-  setTimeout(() => { if (embeddingStatusEl) embeddingStatusEl.remove(); embeddingStatusEl = null; }, 3500);
+  // Ensure prediction column exists & force a visual refresh immediately
+  if (table && table.gridApi) {
+    try {
+      ensurePredictionColumn(table);
+      // Force repaint for prediction cells
+      table.gridApi.refreshCells({ force: true, columns: ['__prediction'] });
+      if (table.gridApi.redrawRows) table.gridApi.redrawRows();
+    } catch (e) {
+      console.warn('[explorer] Unable to force refresh after predictions', e);
+    }
+  }
 }
 
 // Decide prediction path based on saved training mode
 async function runPredictions() {
   const btn = document.getElementById('predictWithModel');
+  if (state.predictionInProgress) {
+    console.log('[explorer] 🔄 Prediction already in progress - ignoring new click');
+    return;
+  }
+  state.predictionInProgress = true;
   if (btn) btn.disabled = true;
   try {
     if (!state.modelAvailable) { alert('No trained model found. Train a model first.'); return; }
@@ -357,7 +528,7 @@ async function runPredictions() {
     const mode = getTrainingMode();
     console.log(`[explorer] 🔮 Predicting on ${selectedRows.length} row(s) using mode=${mode === '1' ? 'LLM embedding' : 'RAW'} modelStorage=${state.modelStorageUrl}`);
     if (mode === '1') {
-      await runPredictionsEmbedding(table, selectedRows);
+      await runPredictionsEmbedding(table, selectedRows).catch(e => { throw e; });
     } else {
       await runPredictionsRaw(table, selectedRows);
     }
@@ -366,6 +537,7 @@ async function runPredictions() {
     console.error('Prediction error:', e);
     alert('Error running predictions: ' + e.message);
   } finally {
+    state.predictionInProgress = false;
     if (btn) btn.disabled = !state.modelAvailable;
   }
 }
